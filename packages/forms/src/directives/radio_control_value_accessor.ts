@@ -6,9 +6,9 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {Directive, ElementRef, forwardRef, Injectable, Injector, Input, OnDestroy, OnInit, Renderer2} from '@angular/core';
+import {Directive, ElementRef, forwardRef, Injectable, Injector, Input, NgModule, OnDestroy, OnInit, Renderer2} from '@angular/core';
 
-import {ControlValueAccessor, NG_VALUE_ACCESSOR} from './control_value_accessor';
+import {BuiltInControlValueAccessor, ControlValueAccessor, NG_VALUE_ACCESSOR} from './control_value_accessor';
 import {NgControl} from './ng_control';
 
 export const RADIO_VALUE_ACCESSOR: any = {
@@ -17,11 +17,28 @@ export const RADIO_VALUE_ACCESSOR: any = {
   multi: true
 };
 
+function throwNameError() {
+  throw new Error(`
+      If you define both a name and a formControlName attribute on your radio button, their values
+      must match. Ex: <input type="radio" formControlName="food" name="food">
+    `);
+}
+
+/**
+ * Internal-only NgModule that works as a host for the `RadioControlRegistry` tree-shakable
+ * provider. Note: the `InternalFormsSharedModule` can not be used here directly, since it's
+ * declared *after* the `RadioControlRegistry` class and the `providedIn` doesn't support
+ * `forwardRef` logic.
+ */
+@NgModule()
+export class RadioControlRegistryModule {
+}
+
 /**
  * @description
  * Class used by Angular to track radio buttons. For internal use only.
  */
-@Injectable()
+@Injectable({providedIn: RadioControlRegistryModule})
 export class RadioControlRegistry {
   private _accessors: any[] = [];
 
@@ -93,7 +110,8 @@ export class RadioControlRegistry {
   host: {'(change)': 'onChange()', '(blur)': 'onTouched()'},
   providers: [RADIO_VALUE_ACCESSOR]
 })
-export class RadioControlValueAccessor implements ControlValueAccessor, OnDestroy, OnInit {
+export class RadioControlValueAccessor extends BuiltInControlValueAccessor implements
+    ControlValueAccessor, OnDestroy, OnInit {
   /** @internal */
   // TODO(issue/24571): remove '!'.
   _state!: boolean;
@@ -105,16 +123,13 @@ export class RadioControlValueAccessor implements ControlValueAccessor, OnDestro
   _fn!: Function;
 
   /**
-   * @description
    * The registered callback function called when a change event occurs on the input element.
+   * Note: we declare `onChange` here (also used as host listener) as a function with no arguments
+   * to override the `onChange` function (which expects 1 argument) in the parent
+   * `BaseControlValueAccessor` class.
+   * @nodoc
    */
   onChange = () => {};
-
-  /**
-   * @description
-   * The registered callback function called when a blur event occurs on the input element.
-   */
-  onTouched = () => {};
 
   /**
    * @description
@@ -138,43 +153,35 @@ export class RadioControlValueAccessor implements ControlValueAccessor, OnDestro
   @Input() value: any;
 
   constructor(
-      private _renderer: Renderer2, private _elementRef: ElementRef,
-      private _registry: RadioControlRegistry, private _injector: Injector) {}
+      renderer: Renderer2, elementRef: ElementRef, private _registry: RadioControlRegistry,
+      private _injector: Injector) {
+    super(renderer, elementRef);
+  }
 
-  /**
-   * @description
-   * A lifecycle method called when the directive is initialized. For internal use only.
-   */
+  /** @nodoc */
   ngOnInit(): void {
     this._control = this._injector.get(NgControl);
     this._checkName();
     this._registry.add(this._control, this);
   }
 
-  /**
-   * @description
-   * Lifecycle method called before the directive's instance is destroyed. For internal use only.
-   */
+  /** @nodoc */
   ngOnDestroy(): void {
     this._registry.remove(this);
   }
 
   /**
-   * @description
    * Sets the "checked" property value on the radio input element.
-   *
-   * @param value The checked value
+   * @nodoc
    */
   writeValue(value: any): void {
     this._state = value === this.value;
-    this._renderer.setProperty(this._elementRef.nativeElement, 'checked', this._state);
+    this.setProperty('checked', this._state);
   }
 
   /**
-   * @description
    * Registers a function called when the control value changes.
-   *
-   * @param fn The callback function
+   * @nodoc
    */
   registerOnChange(fn: (_: any) => {}): void {
     this._fn = fn;
@@ -193,36 +200,11 @@ export class RadioControlValueAccessor implements ControlValueAccessor, OnDestro
     this.writeValue(value);
   }
 
-  /**
-   * @description
-   * Registers a function called when the control is touched.
-   *
-   * @param fn The callback function
-   */
-  registerOnTouched(fn: () => {}): void {
-    this.onTouched = fn;
-  }
-
-  /**
-   * Sets the "disabled" property on the input element.
-   *
-   * @param isDisabled The disabled value
-   */
-  setDisabledState(isDisabled: boolean): void {
-    this._renderer.setProperty(this._elementRef.nativeElement, 'disabled', isDisabled);
-  }
-
   private _checkName(): void {
-    if (this.name && this.formControlName && this.name !== this.formControlName) {
-      this._throwNameError();
+    if (this.name && this.formControlName && this.name !== this.formControlName &&
+        (typeof ngDevMode === 'undefined' || ngDevMode)) {
+      throwNameError();
     }
     if (!this.name && this.formControlName) this.name = this.formControlName;
-  }
-
-  private _throwNameError(): void {
-    throw new Error(`
-      If you define both a name and a formControlName attribute on your radio button, their values
-      must match. Ex: <input type="radio" formControlName="food" name="food">
-    `);
   }
 }

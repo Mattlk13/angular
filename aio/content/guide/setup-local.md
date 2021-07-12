@@ -1,9 +1,7 @@
 # Setting up the local environment and workspace
 
-
 This guide explains how to set up your environment for Angular development using the [Angular CLI tool](cli "CLI command reference").
 It includes information about prerequisites, installing the CLI, creating an initial workspace and starter app, and running that app locally to verify your setup.
-
 
 <div class="callout is-helpful">
 <header>Try Angular without local setup</header>
@@ -25,49 +23,48 @@ To use the Angular framework, you should be familiar with the following:
 
 Knowledge of [TypeScript](https://www.typescriptlang.org/) is helpful, but not required.
 
+To install Angular on your local system, you need the following:
+
 {@a nodejs}
-### Node.js
 
-Make sure your development environment includes `Node.js®` and an npm package manager.
+* **Node.js**
 
-Angular requires a [current, active LTS, or maintenance LTS](https://nodejs.org/about/releases/) version of `Node.js`. See the `engines` key for the specific version requirements in our [package.json](https://unpkg.com/@angular/cli/package.json).
+  Angular requires an [active LTS or maintenance LTS](https://nodejs.org/about/releases) version of Node.js.
 
-* To check your version, run `node -v` in a terminal/console window.
+  <div class="alert is-helpful">
 
-* To get `Node.js`, go to [nodejs.org](https://nodejs.org "Nodejs.org").
+  For information about specific version requirements, see the `engines` key in the [package.json](https://unpkg.com/browse/@angular/core/package.json) file.
+
+  </div>
+
+  For more information on installing Node.js, see [nodejs.org](https://nodejs.org "Nodejs.org").
+  If you are unsure what version of Node.js runs on your system, run `node -v` in a terminal window.
 
 {@a npm}
-### npm package manager
 
-Angular, the Angular CLI, and Angular apps depend on features and functionality provided by libraries that are available as [npm packages](https://docs.npmjs.com/getting-started/what-is-npm). To download and install npm packages, you must have an npm package manager.
+* **npm package manager**
 
-This setup guide uses the [npm client](https://docs.npmjs.com/cli/install) command line interface, which is installed with `Node.js` by default.
-
-To check that you have the npm client installed, run `npm -v` in a terminal/console window.
+  Angular, the Angular CLI, and Angular applications depend on [npm packages](https://docs.npmjs.com/getting-started/what-is-npm) for many features and functions.
+  To download and install npm packages, you need an npm package manager.
+  This guide uses the [npm client](https://docs.npmjs.com/cli/install) command line interface, which is installed with `Node.js` by default.
+  To check that you have the npm client installed, run `npm -v` in a terminal window.
 
 
 {@a install-cli}
 
-## Step 1: Install the Angular CLI
+## Install the Angular CLI
 
-You use the Angular CLI
-to create projects, generate application and library code, and perform a variety of ongoing development tasks such as testing, bundling, and deployment.
+You use the Angular CLI to create projects, generate application and library code, and perform a variety of ongoing development tasks such as testing, bundling, and deployment.
 
-Install the Angular CLI globally.
+To install the Angular CLI, open a terminal window and run the following command:
 
-To install the CLI using `npm`, open a terminal/console window and enter the following command:
-
-
-<code-example language="sh" class="code-shell">
-  npm install -g @angular/cli
-
+<code-example language="sh">
+  npm install -g @angular/cli<aio-angular-dist-tag class="pln"></aio-angular-dist-tag>
 </code-example>
-
-
 
 {@a create-proj}
 
-## Step 2: Create a workspace and initial application
+## Create a workspace and initial application
 
 You develop apps in the context of an Angular [**workspace**](guide/glossary#workspace).
 
@@ -75,7 +72,7 @@ To create a new workspace and initial starter app:
 
 1. Run the CLI command `ng new` and provide the name `my-app`, as shown here:
 
-    <code-example language="sh" class="code-shell">
+   <code-example language="sh">
       ng new my-app
 
     </code-example>
@@ -86,18 +83,17 @@ The Angular CLI installs the necessary Angular npm packages and other dependenci
 
 The CLI creates a new workspace and a simple Welcome app, ready to run.
 
-
 {@a serve}
 
-## Step 3: Run the application
+## Run the application
 
-The Angular CLI includes a server, so that you can easily build and serve your app locally.
+The Angular CLI includes a server, so that you can build and serve your app locally.
 
-1. Go to the workspace folder (`my-app`).
+1. Navigate to the workspace folder, such as `my-app`.
 
-1. Launch the server by using the CLI command `ng serve`, with the `--open` option.
+1. Run the following command:
 
-<code-example language="sh" class="code-shell">
+<code-example language="sh">
   cd my-app
   ng serve --open
 </code-example>
@@ -108,7 +104,7 @@ and rebuilds the app as you make changes to those files.
 The `--open` (or just `-o`) option automatically opens your browser
 to `http://localhost:4200/`.
 
-You will see:
+If your installation and setup was successful, you should see a page similar to the following.
 
 
 <div class="lightbox">

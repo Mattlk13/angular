@@ -172,7 +172,6 @@ export function readCommandLineAndConfiguration(
       emitFlags: api.EmitFlags.Default
     };
   }
-  const allDiagnostics: Diagnostics = [];
   const config = readConfiguration(project, cmdConfig.options);
   const options = {...config.options, ...existingOptions};
   if (options.locale) {
@@ -234,6 +233,7 @@ function printDiagnostics(
 
 // CLI entry point
 if (require.main === module) {
+  process.title = 'Angular Compiler (ngc)';
   const args = process.argv.slice(2);
   // We are running the real compiler so run against the real file-system
   setFileSystem(new NodeJSFileSystem());

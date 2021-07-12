@@ -6,8 +6,9 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {isDevMode} from '../util/is_dev_mode';
-import {InertBodyHelper} from './inert_body';
+import {TrustedHTML} from '../util/security/trusted_type_defs';
+import {trustedHTMLFromString} from '../util/security/trusted_types';
+import {getInertBodyHelper, InertBodyHelper} from './inert_body';
 import {_sanitizeUrl, sanitizeSrcset} from './url_sanitizer';
 
 function tagSet(tags: string): {[k: string]: boolean} {
@@ -27,15 +28,15 @@ function merge(...sets: {[k: string]: boolean}[]): {[k: string]: boolean} {
 }
 
 // Good source of info about elements and attributes
-// http://dev.w3.org/html5/spec/Overview.html#semantics
-// http://simon.html5.org/html-elements
+// https://html.spec.whatwg.org/#semantics
+// https://simon.html5.org/html-elements
 
 // Safe Void Elements - HTML5
-// http://dev.w3.org/html5/spec/Overview.html#void-elements
+// https://html.spec.whatwg.org/#void-elements
 const VOID_ELEMENTS = tagSet('area,br,col,hr,img,wbr');
 
 // Elements that you can, intentionally, leave open (and which close themselves)
-// http://dev.w3.org/html5/spec/Overview.html#optional-tags
+// https://html.spec.whatwg.org/#optional-tags
 const OPTIONAL_END_TAG_BLOCK_ELEMENTS = tagSet('colgroup,dd,dt,li,p,tbody,td,tfoot,th,thead,tr');
 const OPTIONAL_END_TAG_INLINE_ELEMENTS = tagSet('rp,rt');
 const OPTIONAL_END_TAG_ELEMENTS =
@@ -242,10 +243,10 @@ let inertBodyHelper: InertBodyHelper;
  * Sanitizes the given unsafe, untrusted HTML fragment, and returns HTML text that is safe to add to
  * the DOM in a browser environment.
  */
-export function _sanitizeHtml(defaultDoc: any, unsafeHtmlInput: string): string {
+export function _sanitizeHtml(defaultDoc: any, unsafeHtmlInput: string): TrustedHTML|string {
   let inertBodyElement: HTMLElement|null = null;
   try {
-    inertBodyHelper = inertBodyHelper || new InertBodyHelper(defaultDoc);
+    inertBodyHelper = inertBodyHelper || getInertBodyHelper(defaultDoc);
     // Make sure unsafeHtml is actually a string (TypeScript types are not enforced at runtime).
     let unsafeHtml = unsafeHtmlInput ? String(unsafeHtmlInput) : '';
     inertBodyElement = inertBodyHelper.getInertBodyElement(unsafeHtml);
@@ -269,12 +270,12 @@ export function _sanitizeHtml(defaultDoc: any, unsafeHtmlInput: string): string 
     const sanitizer = new SanitizingHtmlSerializer();
     const safeHtml = sanitizer.sanitizeChildren(
         getTemplateContent(inertBodyElement!) as Element || inertBodyElement);
-    if (isDevMode() && sanitizer.sanitizedSomething) {
+    if ((typeof ngDevMode === 'undefined' || ngDevMode) && sanitizer.sanitizedSomething) {
       console.warn(
-          'WARNING: sanitizing HTML stripped some content, see http://g.co/ng/security#xss');
+          'WARNING: sanitizing HTML stripped some content, see https://g.co/ng/security#xss');
     }
 
-    return safeHtml;
+    return trustedHTMLFromString(safeHtml);
   } finally {
     // In case anything goes wrong, clear out inertElement to reset the entire DOM structure.
     if (inertBodyElement) {

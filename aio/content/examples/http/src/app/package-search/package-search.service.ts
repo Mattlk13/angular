@@ -14,17 +14,11 @@ export interface NpmPackageInfo {
 
 export const searchUrl = 'https://npmsearch.com/query';
 
-const httpOptions = {
-  headers: new HttpHeaders({
-    'x-refresh':  'true'
-  })
-};
-
 function createHttpOptions(packageName: string, refresh = false) {
     // npm package name search api
     // e.g., http://npmsearch.com/query?q=dom'
     const params = new HttpParams({ fromObject: { q: packageName } });
-    const headerMap = refresh ? {'x-refresh': 'true'} : {};
+    const headerMap: Record<string, string> = refresh ? {'x-refresh': 'true'} : {};
     const headers = new HttpHeaders(headerMap) ;
     return { headers, params };
 }
@@ -39,7 +33,7 @@ export class PackageSearchService {
     this.handleError = httpErrorHandler.createHandleError('HeroesService');
   }
 
-  search (packageName: string, refresh = false): Observable<NpmPackageInfo[]> {
+  search(packageName: string, refresh = false): Observable<NpmPackageInfo[]> {
     // clear if no pkg name
     if (!packageName.trim()) { return of([]); }
 

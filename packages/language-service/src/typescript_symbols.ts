@@ -242,6 +242,9 @@ function selectSignature(type: ts.Type, context: TypeContext, types: Symbol[]): 
   function allParameterTypesMatch(signature: ts.Signature) {
     const tc = context.checker;
     return signature.getParameters().every((parameter: ts.Symbol, i: number) => {
+      if (parameter.valueDeclaration === undefined) {
+        return false;
+      }
       const type = tc.getTypeOfSymbolAtLocation(parameter, parameter.valueDeclaration);
       return type === passedInTypes[i];
     });
@@ -849,7 +852,7 @@ function getTsTypeFromBuiltinType(builtinType: BuiltinType, ctx: TypeContext): t
           `Internal error, unhandled literal kind ${builtinType}:${BuiltinType[builtinType]}`);
   }
   const node = ts.createNode(syntaxKind);
-  node.parent = ts.createEmptyStatement();
+  (node.parent as ts.Node) = ts.createEmptyStatement();
   return ctx.checker.getTypeAtLocation(node);
 }
 

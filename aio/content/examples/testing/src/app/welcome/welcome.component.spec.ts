@@ -1,14 +1,14 @@
 // #docplaster
 import { ComponentFixture, inject, TestBed } from '@angular/core/testing';
 
-import { UserService }      from '../model/user.service';
+import { UserService } from '../model/user.service';
 import { WelcomeComponent } from './welcome.component';
 
 // #docregion mock-user-service
 class MockUserService {
   isLoggedIn = true;
   user = { name: 'Test User'};
-};
+}
 // #enddocregion mock-user-service
 
 describe('WelcomeComponent (class only)', () => {
@@ -32,7 +32,7 @@ describe('WelcomeComponent (class only)', () => {
 
   // #docregion class-only-tests
   it('should not have welcome message after construction', () => {
-    expect(comp.welcome).toBeUndefined();
+    expect(comp.welcome).toBe('');
   });
 
   it('should welcome logged in user after Angular calls ngOnInit', () => {
@@ -130,6 +130,6 @@ describe('WelcomeComponent', () => {
   }));
 
   it('TestBed and Component UserService should be the same', () => {
-    expect(userService === componentUserService).toBe(true);
+    expect(userService).toBe(componentUserService);
   });
 });

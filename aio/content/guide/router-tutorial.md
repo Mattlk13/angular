@@ -3,13 +3,13 @@
 This tutorial describes how you can build a single-page application, SPA that uses multiple Angular routes.
 
 
-In an SPA, all of your application's functions exist in a single HTML page.
-As users access your application's features, the browser needs to render only the parts that matter to the user, instead of loading a new page. This pattern can significantly improve your application's user exprience.
+In a Single Page Application (SPA), all of your application's functions exist in a single HTML page.
+As users access your application's features, the browser needs to render only the parts that matter to the user, instead of loading a new page. This pattern can significantly improve your application's user experience.
 
 To define how users navigate through your application, you use routes. You can add routes to define how users navigate from one part of your application to another.
 You can also configure routes to guard against unexpected or unauthorized behavior.
 
-To explore a sample app featuring the contents of this tutorial, see the <live-example></live-example>.
+To explore a sample application featuring the contents of this tutorial, see the <live-example></live-example>.
 
 ## Objectives
 
@@ -105,7 +105,7 @@ In this section, you'll define two routes:
 * The route `/crisis-center` opens the `crisis-center` component.
 * The route `/heroes-list` opens the `heroes-list` component.
 
-A route definition is a JavaScript object. Each route typically has two propteries. The first property, `path`, is a string
+A route definition is a JavaScript object. Each route typically has two properties. The first property, `path`, is a string
 that specifies the URL path for the route. The second property, `component`, is a string that specifies
 what component your application should display for that path.
 
@@ -118,7 +118,7 @@ what component your application should display for that path.
    <code-example header="src/app/app.module.ts" path="router-tutorial/src/app/app.module.ts" region="import-basic"></code-example>
 
 This code adds the `RouterModule` to the `imports` array. Next, the code uses the `forRoot()` method of the `RouterModule` to
-define your two routes. This method takes an array of JavaScript objects, with each object defining the proprties of a route.
+define your two routes. This method takes an array of JavaScript objects, with each object defining the properties of a route.
 The `forRoot()` method ensures that your application only instantiates one `RouterModule`. For more information, see
 [Singleton Services](/guide/singleton-services#forroot-and-the-router).
 
@@ -220,7 +220,7 @@ Now when you open your application, it displays the `heroes-list` component by d
 ## Adding a 404 page
 
 It is possible for a user to try to access a route that you have not defined. To account for
-this behavior, a best practice is to display a 404 page. In this section, you'll create a 404 page and
+this behavior, the best practice is to display a 404 page. In this section, you'll create a 404 page and
 update your route configuration to show that page for any unspecified routes.
 
 1. From the terminal, create a new component, `PageNotFound`.

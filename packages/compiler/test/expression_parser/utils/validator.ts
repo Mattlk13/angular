@@ -6,7 +6,7 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {AST, Binary, BindingPipe, Chain, Conditional, FunctionCall, ImplicitReceiver, Interpolation, KeyedRead, KeyedWrite, LiteralArray, LiteralMap, LiteralPrimitive, MethodCall, ParseSpan, PrefixNot, PropertyRead, PropertyWrite, Quote, RecursiveAstVisitor, SafeMethodCall, SafePropertyRead} from '../../../src/expression_parser/ast';
+import {AST, Binary, BindingPipe, Chain, Conditional, FunctionCall, ImplicitReceiver, Interpolation, KeyedRead, KeyedWrite, LiteralArray, LiteralMap, LiteralPrimitive, MethodCall, ParseSpan, PrefixNot, PropertyRead, PropertyWrite, Quote, RecursiveAstVisitor, SafeKeyedRead, SafeMethodCall, SafePropertyRead, Unary} from '../../../src/expression_parser/ast';
 
 import {unparse} from './unparser';
 
@@ -32,6 +32,10 @@ class ASTValidator extends RecursiveAstVisitor {
     this.parentSpan = ast.span;
     cb();
     this.parentSpan = oldParent;
+  }
+
+  visitUnary(ast: Unary, context: any): any {
+    this.validate(ast, () => super.visitUnary(ast, context));
   }
 
   visitBinary(ast: Binary, context: any): any {
@@ -108,6 +112,10 @@ class ASTValidator extends RecursiveAstVisitor {
 
   visitSafePropertyRead(ast: SafePropertyRead, context: any): any {
     this.validate(ast, () => super.visitSafePropertyRead(ast, context));
+  }
+
+  visitSafeKeyedRead(ast: SafeKeyedRead, context: any): any {
+    this.validate(ast, () => super.visitSafeKeyedRead(ast, context));
   }
 }
 

@@ -6,17 +6,20 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {PullsListCommitsResponse, PullsMergeParams} from '@octokit/rest';
+import {RestEndpointMethodTypes} from '@octokit/plugin-rest-endpoint-methods';
 import {prompt} from 'inquirer';
 
-import {parseCommitMessage} from '../../../commit-message/validate';
-import {GitClient} from '../../../utils/git';
+import {parseCommitMessage} from '../../../commit-message/parse';
+import {AuthenticatedGitClient} from '../../../utils/git/authenticated-git-client';
 import {GithubApiMergeMethod} from '../config';
 import {PullRequestFailure} from '../failures';
 import {PullRequest} from '../pull-request';
 import {matchesPattern} from '../string-pattern';
 
 import {MergeStrategy, TEMP_PR_HEAD_BRANCH} from './strategy';
+
+/** Type describing the parameters for the Octokit `merge` API endpoint. */
+type OctokitMergeParams = RestEndpointMethodTypes['pulls']['merge']['parameters'];
 
 /** Configuration for the Github API merge strategy. */
 export interface GithubApiMergeStrategyConfig {
@@ -37,7 +40,7 @@ const COMMIT_HEADER_SEPARATOR = '\n\n';
  * is properly set, but a notable downside is that PRs cannot use fixup or squash commits.
  */
 export class GithubApiMergeStrategy extends MergeStrategy {
-  constructor(git: GitClient, private _config: GithubApiMergeStrategyConfig) {
+  constructor(git: AuthenticatedGitClient, private _config: GithubApiMergeStrategyConfig) {
     super(git);
   }
 
@@ -74,7 +77,7 @@ export class GithubApiMergeStrategy extends MergeStrategy {
       return failure;
     }
 
-    const mergeOptions: PullsMergeParams = {
+    const mergeOptions: OctokitMergeParams = {
       pull_number: prNumber,
       merge_method: method,
       ...this.git.remoteParams,
@@ -94,7 +97,7 @@ export class GithubApiMergeStrategy extends MergeStrategy {
 
     try {
       // Merge the pull request using the Github API into the selected base branch.
-      const result = await this.git.api.pulls.merge(mergeOptions);
+      const result = await this.git.github.pulls.merge(mergeOptions);
 
       mergeStatusCode = result.status;
       targetSha = result.data.sha;
@@ -135,7 +138,13 @@ export class GithubApiMergeStrategy extends MergeStrategy {
 
     // Cherry pick the merged commits into the remaining target branches.
     const failedBranches = await this.cherryPickIntoTargetBranches(
-        `${targetSha}~${targetCommitsCount}..${targetSha}`, cherryPickTargetBranches);
+        `${targetSha}~${targetCommitsCount}..${targetSha}`, cherryPickTargetBranches, {
+          // Commits that have been created by the Github API do not necessarily contain
+          // a reference to the source pull request (unless the squash strategy is used).
+          // To ensure that original commits can be found when a commit is viewed in a
+          // target branch, we add a link to the original commits when cherry-picking.
+          linkToOriginalCommits: true,
+        });
 
     // We already checked whether the PR can be cherry-picked into the target branches,
     // but in case the cherry-pick somehow fails, we still handle the conflicts here. The
@@ -153,7 +162,8 @@ export class GithubApiMergeStrategy extends MergeStrategy {
    * strategy, we cannot start an interactive rebase because we merge using the Github API.
    * The Github API only allows modifications to PR title and body for squash merges.
    */
-  private async _promptCommitMessageEdit(pullRequest: PullRequest, mergeOptions: PullsMergeParams) {
+  private async _promptCommitMessageEdit(
+      pullRequest: PullRequest, mergeOptions: OctokitMergeParams) {
     const commitMessage = await this._getDefaultSquashCommitMessage(pullRequest);
     const {result} = await prompt<{result: string}>({
       type: 'editor',
@@ -189,9 +199,8 @@ export class GithubApiMergeStrategy extends MergeStrategy {
 
   /** Gets all commit messages of commits in the pull request. */
   private async _getPullRequestCommitMessages({prNumber}: PullRequest) {
-    const request = this.git.api.pulls.listCommits.endpoint.merge(
-        {...this.git.remoteParams, pull_number: prNumber});
-    const allCommits: PullsListCommitsResponse = await this.git.api.paginate(request);
+    const allCommits = await this.git.github.paginate(
+        this.git.github.pulls.listCommits, {...this.git.remoteParams, pull_number: prNumber});
     return allCommits.map(({commit}) => commit.message);
   }
 

@@ -9,11 +9,11 @@
 import {InjectFlags, Optional, Renderer2, Self} from '@angular/core';
 import {createLView, createTView, getOrCreateTNode} from '@angular/core/src/render3/instructions/shared';
 import {RenderFlags} from '@angular/core/src/render3/interfaces/definition';
+import {NodeInjectorOffset} from '@angular/core/src/render3/interfaces/injector';
 
 import {ɵɵdefineComponent} from '../../src/render3/definition';
 import {bloomAdd, bloomHashBitOrFactory as bloomHash, bloomHasToken, getOrCreateNodeInjectorForNode} from '../../src/render3/di';
 import {ɵɵdefineDirective, ɵɵdirectiveInject, ɵɵelement, ɵɵelementEnd, ɵɵelementStart, ɵɵtext} from '../../src/render3/index';
-import {TNODE} from '../../src/render3/interfaces/injector';
 import {TNodeType} from '../../src/render3/interfaces/node';
 import {isProceduralRenderer} from '../../src/render3/interfaces/renderer';
 import {LViewFlags, TVIEW, TViewType} from '../../src/render3/interfaces/view';
@@ -107,7 +107,9 @@ describe('di', () => {
           (DirA as any)['__NG_ELEMENT_ID__'] = 1;
           (DirC as any)['__NG_ELEMENT_ID__'] = 257;
           new ComponentFixture(App);
-        }).toThrowError(/NodeInjector: NOT_FOUND \[DirB]/);
+        })
+            .toThrowError(
+                'NG0201: No provider for DirB found in NodeInjector. Find more at https://angular.io/errors/NG0201');
       });
     });
   });
@@ -150,7 +152,7 @@ describe('di', () => {
       });
 
       function bloomState() {
-        return mockTView.data.slice(0, TNODE).reverse();
+        return mockTView.data.slice(0, NodeInjectorOffset.TNODE).reverse();
       }
 
       class Dir0 {
@@ -180,6 +182,9 @@ describe('di', () => {
       class Dir231 {
         /** @internal */ static __NG_ELEMENT_ID__ = 231;
       }
+      class Dir260 {
+        /** @internal */ static __NG_ELEMENT_ID__ = 260;
+      }
 
       it('should add values', () => {
         bloomAdd(0, mockTView, Dir0);
@@ -198,6 +203,8 @@ describe('di', () => {
         expect(bloomState()).toEqual([0, 64, 32, 16, 8, 4, 2, 1]);
         bloomAdd(0, mockTView, Dir231);
         expect(bloomState()).toEqual([128, 64, 32, 16, 8, 4, 2, 1]);
+        bloomAdd(0, mockTView, Dir260);
+        expect(bloomState()).toEqual([128, 64, 32, 16, 8, 4, 2, 17 /* 1 + 2^(260-256) */]);
       });
 
       it('should query values', () => {
@@ -209,6 +216,7 @@ describe('di', () => {
         bloomAdd(0, mockTView, Dir165);
         bloomAdd(0, mockTView, Dir198);
         bloomAdd(0, mockTView, Dir231);
+        bloomAdd(0, mockTView, Dir260);
 
         expect(bloomHasToken(bloomHash(Dir0) as number, 0, mockTView.data)).toEqual(true);
         expect(bloomHasToken(bloomHash(Dir1) as number, 0, mockTView.data)).toEqual(false);
@@ -219,6 +227,7 @@ describe('di', () => {
         expect(bloomHasToken(bloomHash(Dir165) as number, 0, mockTView.data)).toEqual(true);
         expect(bloomHasToken(bloomHash(Dir198) as number, 0, mockTView.data)).toEqual(true);
         expect(bloomHasToken(bloomHash(Dir231) as number, 0, mockTView.data)).toEqual(true);
+        expect(bloomHasToken(bloomHash(Dir260) as number, 0, mockTView.data)).toEqual(true);
       });
     });
   });
@@ -226,12 +235,11 @@ describe('di', () => {
   describe('getOrCreateNodeInjector', () => {
     it('should handle initial undefined state', () => {
       const contentView = createLView(
-          null, createTView(TViewType.Component, -1, null, 1, 0, null, null, null, null, null), {},
-          LViewFlags.CheckAlways, null, null, {} as any, {} as any);
-      enterView(contentView, null);
+          null, createTView(TViewType.Component, null, null, 1, 0, null, null, null, null, null),
+          {}, LViewFlags.CheckAlways, null, null, {} as any, {} as any, null, null);
+      enterView(contentView);
       try {
-        const parentTNode =
-            getOrCreateTNode(contentView[TVIEW], null, 0, TNodeType.Element, null, null);
+        const parentTNode = getOrCreateTNode(contentView[TVIEW], 0, TNodeType.Element, null, null);
         // Simulate the situation where the previous parent is not initialized.
         // This happens on first bootstrap because we don't init existing values
         // so that we have smaller HelloWorld.

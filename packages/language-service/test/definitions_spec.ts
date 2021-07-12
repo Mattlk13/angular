@@ -251,7 +251,7 @@ describe('definitions', () => {
     expect(textSpan).toEqual(marker);
 
     expect(definitions).toBeDefined();
-    expect(definitions!.length).toBe(4);
+    expect(definitions!.length).toBe(3);
 
     const refFileName = '/node_modules/@angular/common/common.d.ts';
     for (const def of definitions!) {
@@ -274,7 +274,7 @@ describe('definitions', () => {
     expect(textSpan).toEqual(marker);
 
     expect(definitions).toBeDefined();
-    expect(definitions!.length).toBe(1);
+    expect(definitions!.length).toBe(3);
 
     const refFileName = '/node_modules/@angular/common/common.d.ts';
     for (const def of definitions!) {
@@ -418,6 +418,19 @@ describe('definitions', () => {
     const [def] = definitions!;
     expect(def.fileName).toBe('/app/test.ng');
     expect(def.textSpan).toEqual({start: 0, length: 0});
+  });
+
+  it('should be able to find a template from an absolute url', () => {
+    const fileName = mockHost.addCode(`
+      @Component({
+        templateUrl: '${TEST_TEMPLATE}',
+      })
+      export class MyComponent {}`);
+
+    const marker = mockHost.readFile(fileName)!.indexOf(TEST_TEMPLATE);
+    const result = ngService.getDefinitionAndBoundSpan(fileName, marker);
+
+    expect(result?.definitions?.[0].fileName).toBe(TEST_TEMPLATE);
   });
 
   it('should be able to find a stylesheet from a url', () => {

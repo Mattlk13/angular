@@ -114,6 +114,10 @@ class ExpressionSourceHumanizer extends e.RecursiveAstVisitor implements t.Visit
     this.recordAst(ast);
     super.visitQuote(ast, null);
   }
+  visitSafeKeyedRead(ast: e.SafeKeyedRead) {
+    this.recordAst(ast);
+    super.visitSafeKeyedRead(ast, null);
+  }
 
   visitTemplate(ast: t.Template) {
     t.visitAll(this, ast.children);
@@ -141,7 +145,14 @@ class ExpressionSourceHumanizer extends e.RecursiveAstVisitor implements t.Visit
   }
   visitContent(ast: t.Content) {}
   visitText(ast: t.Text) {}
-  visitIcu(ast: t.Icu) {}
+  visitIcu(ast: t.Icu) {
+    for (const key of Object.keys(ast.vars)) {
+      ast.vars[key].visit(this);
+    }
+    for (const key of Object.keys(ast.placeholders)) {
+      ast.placeholders[key].visit(this);
+    }
+  }
 }
 
 /**

@@ -9,9 +9,10 @@
 import * as ts from 'typescript';
 
 import {ClassDeclaration, ReflectionHost} from '../../reflection';
+import {TypeCtorMetadata} from '../api';
+import {checkIfGenericTypeBoundsAreContextFree} from './tcb_util';
 
-import {TypeCtorMetadata} from './api';
-import {TypeParameterEmitter} from './type_parameter_emitter';
+import {tsCreateTypeQueryForCoercedInput} from './ts_util';
 
 export function generateTypeCtorDeclarationFn(
     node: ClassDeclaration<ts.ClassDeclaration>, meta: TypeCtorMetadata, nodeTypeRef: ts.EntityName,
@@ -150,9 +151,7 @@ function constructTypeCtorParameter(
           /* modifiers */ undefined,
           /* name */ key,
           /* questionToken */ undefined,
-          /* type */
-          ts.createTypeQueryNode(
-              ts.createQualifiedName(rawType.typeName, `ngAcceptInputType_${key}`)),
+          /* type */ tsCreateTypeQueryForCoercedInput(rawType.typeName, key),
           /* initializer */ undefined));
     }
   }
@@ -166,8 +165,8 @@ function constructTypeCtorParameter(
   if (coercedKeys.length > 0) {
     const coercedLiteral = ts.createTypeLiteralNode(coercedKeys);
 
-    initType =
-        initType !== null ? ts.createUnionTypeNode([initType, coercedLiteral]) : coercedLiteral;
+    initType = initType !== null ? ts.createIntersectionTypeNode([initType, coercedLiteral]) :
+                                   coercedLiteral;
   }
 
   if (initType === null) {
@@ -195,12 +194,6 @@ export function requiresInlineTypeCtor(
   // The class requires an inline type constructor if it has generic type bounds that can not be
   // emitted into a different context.
   return !checkIfGenericTypeBoundsAreContextFree(node, host);
-}
-
-function checkIfGenericTypeBoundsAreContextFree(
-    node: ClassDeclaration<ts.ClassDeclaration>, reflector: ReflectionHost): boolean {
-  // Generic type parameters are considered context free if they can be emitted into any context.
-  return new TypeParameterEmitter(node.typeParameters, reflector).canEmit();
 }
 
 /**

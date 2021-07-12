@@ -8,7 +8,7 @@
 
 import * as ts from 'typescript';
 
-import {create} from '../src/ts_plugin';
+import {create, getExternalFiles} from '../src/ts_plugin';
 import {CompletionKind} from '../src/types';
 
 import {MockTypescriptHost} from './test_utils';
@@ -21,6 +21,7 @@ const mockProject = {
     },
   },
   hasRoots: () => true,
+  fileExists: () => true,
 } as any;
 
 describe('plugin', () => {
@@ -50,15 +51,15 @@ describe('plugin', () => {
     const diags = plugin.getSemanticDiagnostics(fileName);
     expect(diags.length).toBe(1);
     expect(diags[0].messageText)
-        .toBe(`Argument of type '"hello"' is not assignable to parameter of type 'number'.`);
+        .toBe(`Argument of type 'string' is not assignable to parameter of type 'number'.`);
   });
 
   it('should not report TypeScript errors on tour of heroes', () => {
     const compilerDiags = tsLS.getCompilerOptionsDiagnostics();
     expect(compilerDiags).toEqual([]);
     const sourceFiles = program.getSourceFiles().filter(f => !f.fileName.endsWith('.d.ts'));
-    // there are three .ts files in the test project
-    expect(sourceFiles.length).toBe(3);
+    // there are four .ts files in the test project
+    expect(sourceFiles.length).toBe(4);
     for (const {fileName} of sourceFiles) {
       const syntacticDiags = tsLS.getSyntacticDiagnostics(fileName);
       expect(syntacticDiags).toEqual([]);
@@ -128,6 +129,20 @@ describe('plugin', () => {
         insertText: 'children',
       },
     ]);
+  });
+
+  it('should return external templates when getExternalFiles() is called', () => {
+    const externalTemplates = getExternalFiles(mockProject);
+    expect(new Set(externalTemplates)).toEqual(new Set([
+      '/app/test.ng',
+      '/app/#inner/inner.html',
+    ]));
+  });
+
+  it('should not return external template that does not exist', () => {
+    spyOn(mockProject, 'fileExists').and.returnValue(false);
+    const externalTemplates = getExternalFiles(mockProject);
+    expect(externalTemplates.length).toBe(0);
   });
 });
 

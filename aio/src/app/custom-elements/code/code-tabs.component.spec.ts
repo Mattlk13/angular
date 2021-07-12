@@ -48,7 +48,8 @@ describe('CodeTabsComponent', () => {
     // Second code pane expectations
     expect(tabs[1].class).toBe('class-B');
     expect(tabs[1].language).toBe('language-B');
-    expect(tabs[1].linenums).toBe('default-linenums', 'Default linenums should have been used');
+    expect(tabs[1].linenums).withContext('Default linenums should have been used')
+        .toBe('default-linenums');
     expect(tabs[1].path).toBe('path-B');
     expect(tabs[1].region).toBe('region-B');
     expect(tabs[1].header).toBe('header-B');
@@ -69,6 +70,10 @@ describe('CodeTabsComponent', () => {
   it('should show the first tab with the right code', () => {
     const codeContent = fixture.nativeElement.querySelector('aio-code').textContent;
     expect(codeContent.indexOf('Code example 1') !== -1).toBeTruthy();
+  });
+
+  it('should clean-up the projected tabs content once captured', () => {
+    expect(codeTabsComponent.content.nativeElement.innerHTML).toBe('');
   });
 });
 

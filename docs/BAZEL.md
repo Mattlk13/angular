@@ -75,7 +75,7 @@ See also: [`//.bazelrc`](https://github.com/angular/angular/blob/master/.bazelrc
 <a id="debugging"></a>
 
 - Open chrome at: [chrome://inspect](chrome://inspect)
-- Click on  `Open dedicated DevTools for Node` to launch a debugger.
+- Click on `Open dedicated DevTools for Node` to launch a debugger.
 - Run test: `yarn bazel test packages/core/test:test --config=debug`
 
 The process should automatically connect to the debugger.
@@ -120,7 +120,7 @@ Apple+Shift+D on Mac) and click on the green play icon next to the configuration
 
 Open `external` directory which contains everything that bazel downloaded while executing the workspace file:
 ```sh
-open $(bazel info output_base)/external
+open $(yarn -s bazel info output_base)/external
 ```
 
 See subcommands that bazel executes (helpful for debugging):
@@ -130,7 +130,7 @@ yarn bazel build //packages/core:package -s
 
 To debug nodejs_binary executable paths uncomment `find . -name rollup 1>&2` (~ line 96) in
 ```sh
-open $(bazel info output_base)/external/build_bazel_rules_nodejs/internal/node_launcher.sh
+open $(yarn -s bazel info output_base)/external/build_bazel_rules_nodejs/internal/node_launcher.sh
 ```
 
 ## Stamping
@@ -209,7 +209,7 @@ yarn bazel analyze-profile filename_name.profile --task_tree ".*"
 ```
 
 To show all tasks that take longer than a certain threshold, use the `--task_tree_threshold` flag.
-The default behaviour is to use a 50ms threshold.
+The default behavior is to use a 50ms threshold.
 ```
 yarn bazel analyze-profile filename_name.profile --task_tree ".*" --task_tree_threshold 5000
 ```
@@ -253,6 +253,49 @@ Usually there is a single item (or multiple items of the same kind) where the ov
 
 
 ## Known issues
+
+### Windows
+
+#### bazel run
+If you see the following error:
+
+```
+Error: Cannot find module 'C:\users\xxxx\_bazel_xxxx\7lxopdvs\execroot\angular\bazel-out\x64_windows-fastbuild\bin\packages\core\test\bundling\hello_world\symbol_test.bat.runfiles\angular\c;C:\msys64\users\xxxx\_bazel_xxxx\7lxopdvs\execroot\angular\bazel-out\x64_windows-fastbuild\bin\packages\core\test\bundling\hello_world\symbol_test.bat.runfiles\angular\packages\core\test\bundling\hello_world\symbol_test_require_patch.js'
+Require stack:
+- internal/preload
+    at Function.Module._resolveFilename (internal/modules/cjs/loader.js:793:17)
+    at Function.Module._load (internal/modules/cjs/loader.js:686:27)
+    at Module.require (internal/modules/cjs/loader.js:848:19)
+    at Module._preloadModules (internal/modules/cjs/loader.js:1133:12)
+    at loadPreloadModules (internal/bootstrap/pre_execution.js:443:5)
+    at prepareMainThreadExecution (internal/bootstrap/pre_execution.js:62:3)
+    at internal/main/run_main_module.js:7:1 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [ 'internal/preload' ]
+```
+
+`bazel run` only works in Bazel Windows with non-test targets. Ensure that you are using `bazel test` instead.
+
+e.g: `yarn bazel test packages/core/test/bundling/forms:symbol_test --config=ivy`
+
+#### mkdir missing
+If you see the following error::
+```
+ 
+ERROR: An error occurred during the fetch of repository 'npm':
+   Traceback (most recent call last):
+        File "C:/users/anusername/_bazel_anusername/idexbm2i/external/build_bazel_rules_nodejs/internal/npm_install/npm_install.bzl", line 618, column 15, in _yarn_install_impl
+                _copy_file(repository_ctx, repository_ctx.attr.package_json)
+        File "C:/users/anusername/_bazel_anusername/idexbm2i/external/build_bazel_rules_nodejs/internal/npm_install/npm_install.bzl", line 345, column 17, in _copy_file
+                fail("mkdir -p %s failed: \nSTDOUT:\n%s\nSTDERR:\n%s" % (dirname, result.stdout, result.stderr))
+Error in fail: mkdir -p _ failed:
+
+```
+The `msys64` library and associated tools (like `mkdir`) are required to build Angular.
+
+Make sure you have `C:\msys64\usr\bin` in the "system" `PATH` rather than the "user" `PATH`. 
+
+After that, a `git clean -xfd`, `yarn`, and `node scripts\build\build-packages-dist.js` should resolve this issue.
 
 ### Xcode
 

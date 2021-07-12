@@ -5,11 +5,12 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import {absoluteFrom, AbsoluteFsPath, FileSystem, getFileSystem} from '../../src/ngtsc/file_system';
+import * as os from 'os';
+
+import {absoluteFrom, AbsoluteFsPath, FileSystem, getFileSystem, PathManipulation} from '../../src/ngtsc/file_system';
+import {ConsoleLogger, Logger, LogLevel} from '../../src/ngtsc/logging';
 import {ParsedConfiguration, readConfiguration} from '../../src/perform_compile';
 
-import {ConsoleLogger} from './logging/console_logger';
-import {Logger, LogLevel} from './logging/logger';
 import {SUPPORTED_FORMAT_PROPERTIES} from './packages/entry_point';
 import {getPathMappingsFromTsConfig, PathMappings} from './path_mappings';
 import {FileWriter} from './writing/file_writer';
@@ -42,8 +43,20 @@ export interface SyncNgccOptions {
   propertiesToConsider?: string[];
 
   /**
+   * Whether to only process the typings files for this entry-point.
+   *
+   * This is useful when running ngcc only to provide typings files to downstream tooling such as
+   * the Angular Language Service or ng-packagr. Defaults to `false`.
+   *
+   * If this is set to `true` then `compileAllFormats` is forced to `false`.
+   */
+  typingsOnly?: boolean;
+
+  /**
    * Whether to process all formats specified by (`propertiesToConsider`)  or to stop processing
-   * this entry-point at the first matching format. Defaults to `true`.
+   * this entry-point at the first matching format.
+   *
+   * Defaults to `true`, but is forced to `false` if `typingsOnly` is `true`.
    */
   compileAllFormats?: boolean;
 
@@ -171,10 +184,11 @@ export function getSharedSetup(options: NgccOptions): SharedSetup&RequiredNgccOp
     basePath,
     targetEntryPointPath,
     propertiesToConsider = SUPPORTED_FORMAT_PROPERTIES,
+    typingsOnly = false,
     compileAllFormats = true,
     createNewEntryPointFormats = false,
     logger = new ConsoleLogger(LogLevel.info),
-    pathMappings = getPathMappingsFromTsConfig(tsConfig, projectPath),
+    pathMappings = getPathMappingsFromTsConfig(fileSystem, tsConfig, projectPath),
     async = false,
     errorOnFailedEntryPoint = false,
     enableI18nLegacyMessageIdFormat = true,
@@ -187,10 +201,19 @@ export function getSharedSetup(options: NgccOptions): SharedSetup&RequiredNgccOp
     errorOnFailedEntryPoint = true;
   }
 
+  if (typingsOnly) {
+    // If we only want to process the typings then we do not want to waste time trying to process
+    // multiple JS formats.
+    compileAllFormats = false;
+  }
+
+  checkForSolutionStyleTsConfig(fileSystem, logger, projectPath, options.tsConfigPath, tsConfig);
+
   return {
     basePath,
     targetEntryPointPath,
     propertiesToConsider,
+    typingsOnly,
     compileAllFormats,
     createNewEntryPointFormats,
     logger,
@@ -233,4 +256,46 @@ function getTsConfig(tsConfigPath: string): ParsedConfiguration|null {
 export function clearTsConfigCache() {
   tsConfigPathCache = null;
   tsConfigCache = null;
+}
+
+function checkForSolutionStyleTsConfig(
+    fileSystem: PathManipulation, logger: Logger, projectPath: AbsoluteFsPath,
+    tsConfigPath: string|null|undefined, tsConfig: ParsedConfiguration|null): void {
+  if (tsConfigPath !== null && !tsConfigPath && tsConfig !== null &&
+      tsConfig.rootNames.length === 0 && tsConfig.projectReferences !== undefined &&
+      tsConfig.projectReferences.length > 0) {
+    logger.warn(
+        `The inferred tsconfig file "${tsConfig.project}" appears to be "solution-style" ` +
+        `since it contains no root files but does contain project references.\n` +
+        `This is probably not wanted, since ngcc is unable to infer settings like "paths" mappings from such a file.\n` +
+        `Perhaps you should have explicitly specified one of the referenced projects using the --tsconfig option. For example:\n\n` +
+        tsConfig.projectReferences.map(ref => `  ngcc ... --tsconfig "${ref.originalPath}"\n`)
+            .join('') +
+        `\nFind out more about solution-style tsconfig at https://devblogs.microsoft.com/typescript/announcing-typescript-3-9/#solution-style-tsconfig.\n` +
+        `If you did intend to use this file, then you can hide this warning by providing it explicitly:\n\n` +
+        `  ngcc ... --tsconfig "${fileSystem.relative(projectPath, tsConfig.project)}"`);
+  }
+}
+
+/**
+ * Determines the maximum number of workers to use for parallel execution. This can be set using the
+ * NGCC_MAX_WORKERS environment variable, or is computed based on the number of available CPUs. One
+ * CPU core is always reserved for the master process, so we take the number of CPUs minus one, with
+ * a maximum of 4 workers. We don't scale the number of workers beyond 4 by default, as it takes
+ * considerably more memory and CPU cycles while not offering a substantial improvement in time.
+ */
+export function getMaxNumberOfWorkers(): number {
+  const maxWorkers = process.env.NGCC_MAX_WORKERS;
+  if (maxWorkers === undefined) {
+    // Use up to 4 CPU cores for workers, always reserving one for master.
+    return Math.max(1, Math.min(4, os.cpus().length - 1));
+  }
+
+  const numericMaxWorkers = +maxWorkers.trim();
+  if (!Number.isInteger(numericMaxWorkers)) {
+    throw new Error('NGCC_MAX_WORKERS should be an integer.');
+  } else if (numericMaxWorkers < 1) {
+    throw new Error('NGCC_MAX_WORKERS should be at least 1.');
+  }
+  return numericMaxWorkers;
 }

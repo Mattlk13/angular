@@ -7,8 +7,7 @@
  */
 
 import {CommonModule} from '@angular/common';
-import {ChangeDetectorRef, Component, ComponentFactoryResolver, ContentChildren, Directive, Input, NgModule, OnChanges, QueryList, SimpleChanges, TemplateRef, ViewChild, ViewContainerRef} from '@angular/core';
-import {SimpleChange} from '@angular/core/src/core';
+import {AfterViewInit, ChangeDetectorRef, Component, ComponentFactoryResolver, ContentChildren, Directive, DoCheck, Input, NgModule, OnChanges, QueryList, SimpleChange, SimpleChanges, TemplateRef, ViewChild, ViewContainerRef} from '@angular/core';
 import {TestBed} from '@angular/core/testing';
 import {By} from '@angular/platform-browser';
 import {onlyInIvy} from '@angular/private/testing';
@@ -1122,6 +1121,100 @@ describe('onChanges', () => {
 
     expect(events).toEqual([]);
   });
+});
+
+describe('meta-programing', () => {
+  it('should allow adding lifecycle hook methods any time before first instance creation', () => {
+    const events: any[] = [];
+
+    @Component({template: `<child name="value"></child>`})
+    class App {
+    }
+
+    @Component({selector: 'child', template: `empty`})
+    class Child {
+      @Input() name: string = '';
+    }
+
+    const ChildPrototype = Child.prototype as any;
+    ChildPrototype.ngOnInit = () => events.push('onInit');
+    ChildPrototype.ngOnChanges = (e: SimpleChanges) => {
+      const name = e['name'];
+      expect(name.previousValue).toEqual(undefined);
+      expect(name.currentValue).toEqual('value');
+      expect(name.firstChange).toEqual(true);
+      events.push('ngOnChanges');
+    };
+    ChildPrototype.ngDoCheck = () => events.push('ngDoCheck');
+    ChildPrototype.ngAfterContentInit = () => events.push('ngAfterContentInit');
+    ChildPrototype.ngAfterContentChecked = () => events.push('ngAfterContentChecked');
+    ChildPrototype.ngAfterViewInit = () => events.push('ngAfterViewInit');
+    ChildPrototype.ngAfterViewChecked = () => events.push('ngAfterViewChecked');
+    ChildPrototype.ngOnDestroy = () => events.push('ngOnDestroy');
+
+    TestBed.configureTestingModule({
+      declarations: [App, Child],
+    });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    fixture.destroy();
+    expect(events).toEqual([
+      'ngOnChanges', 'onInit', 'ngDoCheck', 'ngAfterContentInit', 'ngAfterContentChecked',
+      'ngAfterViewInit', 'ngAfterViewChecked', 'ngOnDestroy'
+    ]);
+  });
+
+  it('should allow adding lifecycle hook methods with inheritance any time before first instance creation',
+     () => {
+       const events: any[] = [];
+
+       @Component({template: `<child name="value"></child>`})
+       class App {
+       }
+
+       class BaseChild {}
+
+       @Component({selector: 'child', template: `empty`})
+       class Child extends BaseChild {
+         @Input() name: string = '';
+       }
+
+       // These are defined on the base class
+       const BasePrototype = BaseChild.prototype as any;
+       BasePrototype.ngOnInit = () => events.push('onInit');
+       BasePrototype.ngOnChanges = (e: SimpleChanges) => {
+         const name = e['name'];
+         expect(name.previousValue).toEqual(undefined);
+         expect(name.currentValue).toEqual('value');
+         expect(name.firstChange).toEqual(true);
+         events.push('ngOnChanges');
+       };
+
+       // These will be overwritten later
+       BasePrototype.ngDoCheck = () => events.push('Expected to be overbidden');
+       BasePrototype.ngAfterContentInit = () => events.push('Expected to be overbidden');
+
+
+       // These are define on the concrete class
+       const ChildPrototype = Child.prototype as any;
+       ChildPrototype.ngDoCheck = () => events.push('ngDoCheck');
+       ChildPrototype.ngAfterContentInit = () => events.push('ngAfterContentInit');
+       ChildPrototype.ngAfterContentChecked = () => events.push('ngAfterContentChecked');
+       ChildPrototype.ngAfterViewInit = () => events.push('ngAfterViewInit');
+       ChildPrototype.ngAfterViewChecked = () => events.push('ngAfterViewChecked');
+       ChildPrototype.ngOnDestroy = () => events.push('ngOnDestroy');
+
+       TestBed.configureTestingModule({
+         declarations: [App, Child],
+       });
+       const fixture = TestBed.createComponent(App);
+       fixture.detectChanges();
+       fixture.destroy();
+       expect(events).toEqual([
+         'ngOnChanges', 'onInit', 'ngDoCheck', 'ngAfterContentInit', 'ngAfterContentChecked',
+         'ngAfterViewInit', 'ngAfterViewChecked', 'ngOnDestroy'
+       ]);
+     });
 });
 
 it('should call all hooks in correct order when several directives on same node', () => {
@@ -4284,4 +4377,72 @@ describe('non-regression', () => {
 
     expect(destroyed).toBeTruthy();
   });
+
+  onlyInIvy('Use case is not supported in ViewEngine')
+      .it('should not throw when calling detectChanges from a setter in the presence of a data binding, ngOnChanges and ngAfterViewInit',
+          () => {
+            const hooks: string[] = [];
+
+            @Directive({selector: '[testDir]'})
+            class TestDirective implements OnChanges, AfterViewInit {
+              constructor(private _changeDetectorRef: ChangeDetectorRef) {}
+
+              @Input('testDir')
+              set value(_value: any) {
+                this._changeDetectorRef.detectChanges();
+              }
+              ngOnChanges() {
+                hooks.push('ngOnChanges');
+              }
+              ngAfterViewInit() {
+                hooks.push('ngAfterViewInit');
+              }
+            }
+
+            @Component({template: `<div [testDir]="value">{{value}}</div>`})
+            class App {
+              value = 1;
+            }
+
+            TestBed.configureTestingModule({declarations: [App, TestDirective]});
+            const fixture = TestBed.createComponent(App);
+            expect(() => fixture.detectChanges()).not.toThrow();
+            expect(hooks).toEqual(['ngOnChanges', 'ngAfterViewInit']);
+            expect(fixture.nativeElement.textContent.trim()).toBe('1');
+          });
+
+  onlyInIvy('Use case is not supported in ViewEngine')
+      .it('should call hooks in the correct order when calling detectChanges in a setter', () => {
+        const hooks: string[] = [];
+
+        @Directive({selector: '[testDir]'})
+        class TestDirective implements OnChanges, DoCheck, AfterViewInit {
+          constructor(private _changeDetectorRef: ChangeDetectorRef) {}
+
+          @Input('testDir')
+          set value(_value: any) {
+            this._changeDetectorRef.detectChanges();
+          }
+          ngOnChanges() {
+            hooks.push('ngOnChanges');
+          }
+          ngDoCheck() {
+            hooks.push('ngDoCheck');
+          }
+          ngAfterViewInit() {
+            hooks.push('ngAfterViewInit');
+          }
+        }
+
+        @Component({template: `<div [testDir]="value">{{value}}</div>`})
+        class App {
+          value = 1;
+        }
+
+        TestBed.configureTestingModule({declarations: [App, TestDirective]});
+        const fixture = TestBed.createComponent(App);
+        expect(() => fixture.detectChanges()).not.toThrow();
+        expect(hooks).toEqual(['ngOnChanges', 'ngDoCheck', 'ngAfterViewInit']);
+        expect(fixture.nativeElement.textContent.trim()).toBe('1');
+      });
 });

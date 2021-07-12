@@ -44,12 +44,12 @@ A structure that provides metadata for a class. See [decorator](#decorator).
 
 ## app-shell
 
-App shell is a way to render a portion of your application via a route at build time.
+App shell is a way to render a portion of your application using a route at build time.
 This gives users a meaningful first paint of your application that appears quickly because the browser can render static HTML and CSS without the need to initialize JavaScript.
 
 Learn more in [The App Shell Model](https://developers.google.com/web/fundamentals/architecture/app-shell).
 
-You can use the Angular CLI to [generate](cli/generate#appshell) an app shell.
+You can use the Angular CLI to [generate](cli/generate#app-shell) an app shell.
 This can improve the user experience by quickly launching a static rendered page (a skeleton common to all pages) while the browser downloads the full client version and switches to it automatically after the code loads.
 
 See also [Service Worker and PWA](guide/service-worker-intro).
@@ -99,11 +99,11 @@ between a [token](#token) and a dependency [provider](#provider).
 
 ## bootstrap
 
-A way to initialize and launch an app or system.
+A way to initialize and launch an application or system.
 
-In Angular, an app's root NgModule (`AppModule`) has a `bootstrap` property that identifies the app's top-level [components](#component).
+In Angular, an application's root NgModule (`AppModule`) has a `bootstrap` property that identifies the application's top-level [components](#component).
 During the bootstrap process, Angular creates and inserts these components into the `index.html` host web page.
-You can bootstrap multiple apps in the same `index.html`. Each app contains its own components.
+You can bootstrap multiple applications in the same `index.html`. Each application contains its own components.
 
 Learn more in [Bootstrapping](guide/bootstrapping).
 
@@ -156,10 +156,10 @@ The change detector is responsible for updating the view to reflect the current 
 Similarly, the user can interact with the UI, causing events that change the state of the data model.
 These events can trigger change detection.
 
-Using the default ("CheckAlways") change-detection strategy, the change detector goes through the [view hierarchy](#view-tree) on each VM turn to check every [data-bound property](#data-binding) in the template. In the first phase, it compares the current state of the dependent data with the previous state, and collects changes.
+Using the default change-detection strategy, the change detector goes through the [view hierarchy](#view-tree) on each VM turn to check every [data-bound property](#data-binding) in the template. In the first phase, it compares the current state of the dependent data with the previous state, and collects changes.
 In the second phase, it updates the page DOM to reflect any new data values.
 
-If you set the `OnPush` ("CheckOnce") change-detection strategy, the change detector runs only when [explicitly invoked] (api/core/ChangeDetectorRef), or when it is triggered by an `Input` reference change or event handler. This typically improves performance. For more information, see [Optimize Angular's change detection](https://web.dev/faster-angular-change-detection/).
+If you set the `OnPush` change-detection strategy, the change detector runs only when [explicitly invoked] (api/core/ChangeDetectorRef), or when it is triggered by an `Input` reference change or event handler. This typically improves performance. For more information, see [Optimize Angular's change detection](https://web.dev/faster-angular-change-detection/).
 
 {@a class-decorator}
 
@@ -210,6 +210,7 @@ An Angular component class is responsible for exposing data and handling most of
 
 Read more about component classes, templates, and views in [Introduction to Angular concepts](guide/architecture).
 
+
 ## configuration
 
 See  [workspace configuration](#cli-config)
@@ -230,7 +231,7 @@ A web platform feature, currently supported by most browsers and available in ot
 
 The custom element feature extends HTML by allowing you to define a tag whose content is created and controlled by JavaScript code. A custom element (also called a *web component*) is recognized by a browser when it's added to the [CustomElementRegistry](https://developer.mozilla.org/en-US/docs/Web/API/CustomElementRegistry).
 
-You can use the API to transform an Angular component so that it can be registered with the browser and used in any HTML that you add directly to the DOM within an Angular app. The custom element tag inserts the component's view, with change-detection and data-binding functionality, into content that would otherwise be displayed without Angular processing.
+You can use the API to transform an Angular component so that it can be registered with the browser and used in any HTML that you add directly to the DOM within an Angular application. The custom element tag inserts the component's view, with change-detection and data-binding functionality, into content that would otherwise be displayed without Angular processing.
 
 See [Angular element](#angular-element).
 
@@ -243,7 +244,7 @@ See also [dynamic component loading](#dynamic-components).
 
 ## data binding
 
-A process that allows apps to display data values to a user and respond to user
+A process that allows applications to display data values to a user and respond to user
 actions (such as clicks, touches, and keystrokes).
 
 In data binding, you declare the relationship between an HTML widget and a data source
@@ -252,15 +253,15 @@ Data binding is an alternative to manually pushing application data values into 
 event listeners, pulling changed values from the screen, and
 updating application data values.
 
-Read about the following forms of binding in [Template Syntax](guide/template-syntax):
+Read about the following forms of binding in Angular's [Template Syntax](guide/template-syntax):
 
- * [Interpolation](guide/template-syntax#interpolation)
- * [Property binding](guide/template-syntax#property-binding)
- * [Event binding](guide/template-syntax#event-binding)
- * [Attribute binding](guide/template-syntax#attribute-binding)
- * [Class binding](guide/template-syntax#class-binding)
- * [Style binding](guide/template-syntax#style-binding)
- * [Two-way data binding with ngModel](guide/template-syntax#ngModel)
+ * [Interpolation](guide/interpolation)
+ * [Property binding](guide/property-binding)
+ * [Event binding](guide/event-binding)
+ * [Attribute binding](guide/attribute-binding)
+ * [Class binding](guide/attribute-binding#class-binding)
+ * [Style binding](guide/attribute-binding#style-binding)
+ * [Two-way data binding with ngModel](guide/built-in-directives#ngModel)
 
 {@a declarable}
 
@@ -300,7 +301,7 @@ See [class decorator](#class-decorator), [class field decorator](#class-field-de
 A design pattern and mechanism for creating and delivering some parts of an application (dependencies) to other parts of an application that require them.
 
 In Angular, dependencies are typically services, but they also can be values, such as strings or functions.
-An [injector](#injector) for an app (created automatically during bootstrap) instantiates dependencies when needed, using a configured [provider](#provider) of the service or value.
+An [injector](#injector) for an application (created automatically during bootstrap) instantiates dependencies when needed, using a configured [provider](#provider) of the service or value.
 
 Learn more in [Dependency Injection in Angular](guide/dependency-injection).
 
@@ -337,14 +338,20 @@ There are three categories of directive:
 
 Angular supplies a number of built-in directives that begin with the `ng` prefix.
 You can also create new directives to implement your own functionality.
-You associate a *selector* (an HTML tag such as `<my-directive>`) with a custom directive, thereby extending the [template syntax](guide/template-syntax) that you can use in your apps.
+You associate a *selector* (an HTML tag such as `<my-directive>`) with a custom directive; this extends the [template syntax](guide/template-syntax) that you can use in your applications.
+
+**UpperCamelCase**, such as `NgIf`, refers to a directive class.
+You can use **UpperCamelCase** when describing properties and directive behavior.
+
+**lowerCamelCase**, such as `ngIf` refers to a directive's attribute name.
+You can use **lowerCamelCase** when describing how to apply the directive to an element in the HTML template.
 
 {@a dom}
 
 ## domain-specific language (DSL)
 
 A special-purpose library or API; see [Domain-specific language](https://en.wikipedia.org/wiki/Domain-specific_language).
-Angular extends TypeScript with domain-specific languages for a number of domains relevant to Angular apps, defined in NgModules such as [animations](guide/animations), [forms](guide/forms), and [routing and navigation](guide/router).
+Angular extends TypeScript with domain-specific languages for a number of domains relevant to Angular applications, defined in NgModules such as [animations](guide/animations), [forms](guide/forms), and [routing and navigation](guide/router).
 
 {@a dynamic-components}
 
@@ -472,11 +479,11 @@ Learn more about the injector hierarchy in [Hierarchical Dependency Injectors](g
 ## input
 
 When defining a [directive](#directive), the `@Input()` decorator on a directive property
-makes that property available as a *target* of a [property binding](guide/template-syntax#property-binding).
+makes that property available as a *target* of a [property binding](guide/property-binding).
 Data values flow into an input property from the data source identified
 in the [template expression](#template-expression) to the right of the equal sign.
 
-To learn more, see [input and output properties](guide/template-syntax#inputs-outputs).
+To learn more, see [input and output properties](guide/inputs-outputs).
 
 {@a interpolation}
 
@@ -491,7 +498,7 @@ or displayed between element tags, as in this example.
 ```
 
 
-Read more about [interpolation](guide/template-syntax#interpolation) in [Template Syntax](guide/template-syntax).
+Read more in the [Interpolation](guide/interpolation) guide.
 
 {@a ivy}
 
@@ -540,15 +547,15 @@ A process that speeds up application load time by splitting the application into
 For example, dependencies can be lazy loaded as needed&mdash;as opposed to [eager-loaded](#eager-loading) modules that are required by the root module and are thus loaded on launch.
 
 The [router](#router) makes use of lazy loading to load child views only when the parent view is activated.
-Similarly, you can build custom elements that can be loaded into an Angular app when needed.
+Similarly, you can build custom elements that can be loaded into an Angular application when needed.
 
 {@a library}
 
 ## library
 
-In Angular, a [project](#project) that provides functionality that can be included in other Angular apps.
-A library isn't a complete Angular app and can't run independently.
-(To add re-usable Angular functionality to non-Angular web apps, you can use Angular [custom elements](#angular-element).)
+In Angular, a [project](#project) that provides functionality that can be included in other Angular applications.
+A library isn't a complete Angular application and can't run independently.
+(To add re-usable Angular functionality to non-Angular web applications, you can use Angular [custom elements](#angular-element).)
 
 * Library developers can use the [Angular CLI](#cli) to `generate` scaffolding for a new library in an existing [workspace](#workspace), and can publish a library as an `npm` package.
 
@@ -578,7 +585,6 @@ Angular calls these hook methods in the following order:
 
 To learn more, see [Lifecycle Hooks](guide/lifecycle-hooks).
 
-
 {@a M}
 
 {@a module}
@@ -587,7 +593,7 @@ To learn more, see [Lifecycle Hooks](guide/lifecycle-hooks).
 
 In general, a module collects a block of code dedicated to a single purpose. Angular uses standard JavaScript modules and also defines an Angular module, `NgModule`.
 
-In JavaScript (ECMAScript), each file is a module and all objects defined in the file belong to that module. Objects can exported, making them public, and public objects can be imported for use by other modules.
+In JavaScript (ECMAScript), each file is a module and all objects defined in the file belong to that module. Objects can be exported, making them public, and public objects can be imported for use by other modules.
 
 Angular ships as a collection of JavaScript modules (also called libraries). Each Angular library name begins with the `@angular` prefix. Install Angular libraries with the [npm package manager](https://docs.npmjs.com/getting-started/what-is-npm) and import parts of them with JavaScript `import` declarations.
 
@@ -601,7 +607,7 @@ Compare to [NgModule](#ngmodule).
 ## ngcc
 
 Angular compatibility compiler.
-If you build your app using [Ivy](#ivy), but it depends on libraries that have not been compiled with Ivy, the CLI uses `ngcc` to automatically update the dependent libraries to use Ivy.
+If you build your application using [Ivy](#ivy), but it depends on libraries that have not been compiled with Ivy, the CLI uses `ngcc` to automatically update the dependent libraries to use Ivy.
 
 
 {@a ngmodule}
@@ -627,6 +633,12 @@ The [npm package manager](https://docs.npmjs.com/getting-started/what-is-npm) is
 
 Learn more about how Angular uses [Npm Packages](guide/npm-packages).
 
+{@a ngc}
+
+## ngc
+`ngc` is a Typescript-to-Javascript transpiler that processes Angular decorators, metadata, and templates, and emits JavaScript code.
+The most recent implementation is internally referred to as `ngtsc` because it's a minimalistic wrapper around the TypeScript compiler `tsc` that adds a transform for processing Angular code.
+
 {@a O}
 
 {@a observable}
@@ -637,7 +649,7 @@ A producer of multiple values, which it pushes to [subscribers](#subscriber). Us
 
 Observables can deliver single or multiple values of any type to subscribers, either synchronously (as a function delivers a value to its caller) or on a schedule. A subscriber receives notification of new values as they are produced and notification of either normal completion or error completion.
 
-Angular uses a third-party library called [Reactive Extensions (RxJS)](http://reactivex.io/rxjs/).
+Angular uses a third-party library called [Reactive Extensions (RxJS)](https://rxjs.dev/).
 
 To learn more, see [Observables](guide/observables).
 
@@ -653,11 +665,11 @@ An object passed to the `subscribe()` method for an [observable](#observable). T
 ## output
 
 When defining a [directive](#directive), the `@Output{}` decorator on a directive property
-makes that property available as a *target* of [event binding](guide/template-syntax#event-binding).
+makes that property available as a *target* of [event binding](guide/event-binding).
 Events stream *out* of this property to the receiver identified
 in the [template expression](#template-expression) to the right of the equal sign.
 
-To learn more, see [Input and Output Properties](guide/template-syntax#inputs-outputs).
+To learn more, see [Input and Output Properties](guide/inputs-outputs).
 
 
 {@a P}
@@ -711,7 +723,7 @@ An [injector](#injector) uses the provider to create a new instance of a depende
 for a class that requires it.
 
 Angular registers its own providers with every injector, for services that Angular defines.
-You can register your own providers for services that your app needs.
+You can register your own providers for services that your application needs.
 
 See also [service](#service), [dependency injection](#di).
 
@@ -732,23 +744,43 @@ The alternative is a [template-driven form](#template-driven-forms).
 When using reactive forms:
 
 * The "source of truth", the form model, is defined in the component class.
-* Validation is set up through validation functions rather than valdation directives.
+* Validation is set up through validation functions rather than validation directives.
 * Each control is explicitly created in the component class by creating a `FormControl` instance manually or with `FormBuilder`.
 * The template input elements do *not* use `ngModel`.
 * The associated Angular directives are prefixed with `form`, such as `formControl`, `formGroup`, and `formControlName`.
 
 The alternative is a template-driven form. For an introduction and comparison of both forms approaches, see [Introduction to Angular Forms](guide/forms-overview).
 
+{@a resolver}
+
+## resolver
+
+A class that implements the [Resolve](api/router/Resolve "API reference") interface (or a function with the same signature as the [resolve() method](api/router/Resolve#resolve "API reference")) that you use to produce or retrieve data that is needed before navigation to a requested route can be completed.
+
+Resolvers run after all [route guards](#route-guard "Definition") for a route tree have been executed and have succeeded.
+
+See an example of using a [resolve guard](guide/router-tutorial-toh#resolve-guard "Routing techniques tutorial") to retrieve dynamic data.
+
+{@a route-guard}
+
+## route guard
+
+A method that controls navigation to a requested route in a routing application.
+Guards determine whether a route can be activated or deactivated, and whether a lazy-loaded module can be loaded.
+
+Learn more in the [Routing and Navigation](guide/router#preventing-unauthorized-access "Examples") guide.
+
+
 {@a router}
 {@a router-module}
 
 ## router
 
-A tool that configures and implements navigation among states and [views](#view) within an Angular app.
+A tool that configures and implements navigation among states and [views](#view) within an Angular application.
 
 The `Router` module is an [NgModule](#ngmodule) that provides the necessary service providers and directives for navigating through application views. A [routing component](#routing-component) is one that imports the `Router` module and whose template contains a `RouterOutlet` element where it can display views produced by the router.
 
-The router defines navigation among views on a single page, as opposed to navigation among pages. It interprets URL-like links to determine which views to create or destroy, and which components to load or unload. It allows you to take advantage of [lazy loading](#lazy-load) in your Angular apps.
+The router defines navigation among views on a single page, as opposed to navigation among pages. It interprets URL-like links to determine which views to create or destroy, and which components to load or unload. It allows you to take advantage of [lazy loading](#lazy-load) in your Angular applications.
 
 To learn more, see [Routing and Navigation](guide/router).
 
@@ -783,7 +815,7 @@ A schematic defines [rules](#rule) that operate on a virtual file system called 
 
 The [Angular CLI](#cli) uses schematics to generate and modify [Angular projects](#project) and parts of projects.
 
-* Angular provides a set of schematics for use with the CLI. See the [Angular CLI command reference](cli). The [`ng add`](cli/add) command runs schematics as part of adding a library to your project. The [`ng generate`](cli/generate) command runs schematics to create apps, libraries, and Angular code constructs.
+* Angular provides a set of schematics for use with the CLI. See the [Angular CLI command reference](cli). The [`ng add`](cli/add) command runs schematics as part of adding a library to your project. The [`ng generate`](cli/generate) command runs schematics to create applications, libraries, and Angular code constructs.
 
 * [Library](#library) developers can create schematics that enable the Angular CLI to add and update their published libraries, and to generate artifacts the library defines.
 Add these schematics to the npm package that you use to publish and share your library.
@@ -823,10 +855,10 @@ Import a scoped package in the same way that you import a normal package.
 A technique that generates static application pages on the server, and can generate and serve those pages in response to requests from browsers.
 It can also pre-generate pages as HTML files that you serve later.
 
-This technique can improve performance on mobile and low-powered devices and improve the user experience by showing a static first page quickly while the client-side app is loading.
-The static version can also make your app more visible to web crawlers.
+This technique can improve performance on mobile and low-powered devices and improve the user experience by showing a static first page quickly while the client-side application is loading.
+The static version can also make your application more visible to web crawlers.
 
-You can easily prepare an app for server-side rendering by using the [CLI](#cli) to run the [Angular Universal](#universal) tool, using the `@nguniversal/express-engine` [schematic](#schematic).
+You can easily prepare an application for server-side rendering by using the [CLI](#cli) to run the [Angular Universal](#universal) tool, using the `@nguniversal/express-engine` [schematic](#schematic).
 
 
 {@a service}
@@ -847,7 +879,7 @@ To learn more, see [Introduction to Services and Dependency Injection](guide/arc
 
 ## structural directives
 
-A category of [directive](#directive) that is responsible for shaping HTML layout by modifying the DOM&mdashthat is, adding, removing, or manipulating elements and their children.
+A category of [directive](#directive) that is responsible for shaping HTML layout by modifying the DOM&mdash;that is, adding, removing, or manipulating elements and their children.
 
 To learn more, see [Structural Directives](guide/structural-directives).
 
@@ -875,7 +907,7 @@ A buildable or runnable subset of a [project](#project), configured as an object
 
 In the `angular.json` file, each project has an "architect" section that contains targets which configure builders. Some of these targets correspond to [CLI commands](#cli), such as `build`, `serve`, `test`, and `lint`.
 
-For example, the Architect builder invoked by the `ng build` command to compile a project uses a particular build tool, and has a default configuration whose values can be overridden on the command line. The `build` target also defines an alternate configuration for a "production" build, that can be invoked with the `--prod` flag on the `build` command.
+For example, the Architect builder invoked by the `ng build` command to compile a project uses a particular build tool, and has a default configuration with values that you can override on the command line. The `build` target also defines an alternate configuration for a "development" build, which you can invoke with the `--configuration development` flag on the `build` command.
 
 The Architect tool provides a set of builders. The [`ng new` command](cli/new) provides a set of targets for the initial application project. The [`ng generate application`](cli/generate#application) and [`ng generate library`](cli/generate#library) commands provide a set of targets for each new [project](#project). These targets, their options and configurations, can be customized to meet the needs of your project. For example, you may want to add a "staging" or "testing" configuration to a project's "build" target.
 
@@ -917,7 +949,41 @@ The alternative is a reactive form. For an introduction and comparison of both f
 
 A TypeScript-like syntax that Angular evaluates within a [data binding](#data-binding).
 
-Read about how to write template expressions in  [Template expressions](guide/template-syntax#template-expressions).
+Read about how to write template expressions in the [template expressions](guide/interpolation#template-expressions) section of the [Interpolation](guide/interpolation) guide.
+
+{@a template-reference-variable}
+
+## template reference variable
+
+A variable defined in a template that references an instance associated with an element, such as a directive instance, component instance, template as in `TemplateRef`, or DOM element.
+After declaring a template reference variable on an element in a template,
+you can access values from that variable elsewhere within the same template.
+The following example defines a template reference variable named `#phone`.
+
+<code-example path="template-reference-variables/src/app/app.component.html" region="ref-var" header="src/app/app.component.html"></code-example>
+
+For more information, see the [Template reference variable](guide/template-reference-variables) guide.
+
+
+{@a template-input-variable}
+
+## template input variable
+
+A template input variable is a variable you can reference within a single instance of the template. You declare a template input variable using the `let` keyword as in `let customer`.
+
+```
+ <tr *ngFor="let customer of customers;">
+     <td>{{customer.customerNo}}</td>
+     <td>{{customer.name}}</td>
+     <td>{{customer.address}}</td>
+     <td>{{customer.city}}</td>
+     <td>{{customer.state}}</td>
+     <button (click)="selectedCustomer=customer">Select</button>
+   </tr>
+```
+
+Read and learn more about [template input variables](guide/template-reference-variables#template-input-variable).
+
 
 {@a token}
 
@@ -948,7 +1014,7 @@ code completion, refactoring, inline documentation, and intelligent search).
 Many code editors and IDEs support TypeScript either natively or with plug-ins.
 
 TypeScript is the preferred language for Angular development.
-Read more about TypeScript at [typescriptlang.org](http://www.typescriptlang.org/).
+Read more about TypeScript at [typescriptlang.org](https://www.typescriptlang.org/).
 
 ## TypeScript configuration file
 
@@ -966,7 +1032,7 @@ A data flow model where the component tree is always checked for changes in one 
 In practice, this means that data in Angular flows downward during change detection.
 A parent component can easily change values in its child components because the parent is checked first.
 A failure could occur, however, if a child component tries to change a value in its parent during change detection (inverting the expected data flow), because the parent component has already been rendered.
-In development mode, Angular throws the `ExpressionChangedAfterItHasBeenCheckedError` error if your app attempts to do this, rather than silently failing to render the new value.
+In development mode, Angular throws the `ExpressionChangedAfterItHasBeenCheckedError` error if your application attempts to do this, rather than silently failing to render the new value.
 
 To avoid this error, a [lifecycle hook](guide/lifecycle-hooks) method that seeks to make such a change should trigger a new change detection run. The new run follows the same direction as before, but succeeds in picking up the new value.
 
@@ -1031,7 +1097,7 @@ A collection of Angular [projects](#project) (that is, applications and librarie
 The [CLI](#cli) [`ng new` command](cli/new) creates a file system directory (the "workspace root").
 In the workspace root, it also creates the workspace [configuration file](#configuration) (`angular.json`) and, by default, an initial application project with the same name.
 
-Commands that create or operate on apps and libraries (such as `add` and `generate`) must be executed from within a workspace folder.
+Commands that create or operate on applications and libraries (such as `add` and `generate`) must be executed from within a workspace folder.
 
 For more information, see [Workspace Configuration](guide/workspace-config).
 
@@ -1060,9 +1126,9 @@ For more information, see [Workspace and Project File Structure](guide/file-stru
 
 ## zone
 
-An execution context for a set of asynchronous tasks. Useful for debugging, profiling, and testing apps that include asynchronous operations such as event processing, promises, and calls to remote servers.
+An execution context for a set of asynchronous tasks. Useful for debugging, profiling, and testing applications that include asynchronous operations such as event processing, promises, and calls to remote servers.
 
-An Angular app runs in a zone where it can respond to asynchronous events by checking for data changes and updating the information it displays by resolving [data bindings](#data-binding).
+An Angular application runs in a zone where it can respond to asynchronous events by checking for data changes and updating the information it displays by resolving [data bindings](#data-binding).
 
 A zone client can take action before and after an async operation completes.
 

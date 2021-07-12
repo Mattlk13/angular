@@ -30,6 +30,10 @@ class ExpressionSourceHumanizer extends e.RecursiveAstVisitor implements t.Templ
     this.recordAst(ast);
     this.visitAll([ast.ast], null);
   }
+  visitUnary(ast: e.Unary) {
+    this.recordAst(ast);
+    super.visitUnary(ast, null);
+  }
   visitBinary(ast: e.Binary) {
     this.recordAst(ast);
     super.visitBinary(ast, null);
@@ -109,6 +113,10 @@ class ExpressionSourceHumanizer extends e.RecursiveAstVisitor implements t.Templ
   visitQuote(ast: e.Quote) {
     this.recordAst(ast);
     super.visitQuote(ast, null);
+  }
+  visitSafeKeyedRead(ast: e.SafeKeyedRead) {
+    this.recordAst(ast);
+    super.visitSafeKeyedRead(ast, null);
   }
 
   visitNgContent(ast: t.NgContentAst) {}

@@ -10,7 +10,6 @@ import {APP_INITIALIZER, ApplicationInitStatus} from './application_init';
 import {ApplicationRef} from './application_ref';
 import {APP_ID_RANDOM_PROVIDER} from './application_tokens';
 import {defaultIterableDiffers, defaultKeyValueDiffers, IterableDiffers, KeyValueDiffers} from './change_detection/change_detection';
-import {Console} from './console';
 import {Injector, StaticProvider} from './di';
 import {Inject, Optional, SkipSelf} from './di/metadata';
 import {ErrorHandler} from './error_handler';
@@ -21,7 +20,7 @@ import {ComponentFactoryResolver} from './linker';
 import {Compiler} from './linker/compiler';
 import {NgModule} from './metadata';
 import {SCHEDULER} from './render3/component_ref';
-import {setLocaleId} from './render3/i18n';
+import {setLocaleId} from './render3/i18n/i18n_locale_id';
 import {NgZone} from './zone';
 
 declare const $localize: {locale?: string};
@@ -78,7 +77,7 @@ export const APPLICATION_MODULE_PROVIDERS: StaticProvider[] = [
   {
     provide: ApplicationRef,
     useClass: ApplicationRef,
-    deps: [NgZone, Console, Injector, ErrorHandler, ComponentFactoryResolver, ApplicationInitStatus]
+    deps: [NgZone, Injector, ErrorHandler, ComponentFactoryResolver, ApplicationInitStatus]
   },
   {provide: SCHEDULER, deps: [NgZone], useFactory: zoneSchedulerFactory},
   {

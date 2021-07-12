@@ -11,20 +11,12 @@ arbitrary_genfiles.txt
 bundles
   bundles/waffels-a11y.umd.js
   bundles/waffels-a11y.umd.js.map
-  bundles/waffels-a11y.umd.min.js
-  bundles/waffels-a11y.umd.min.js.map
   bundles/waffels-imports.umd.js
   bundles/waffels-imports.umd.js.map
-  bundles/waffels-imports.umd.min.js
-  bundles/waffels-imports.umd.min.js.map
   bundles/waffels-secondary.umd.js
   bundles/waffels-secondary.umd.js.map
-  bundles/waffels-secondary.umd.min.js
-  bundles/waffels-secondary.umd.min.js.map
   bundles/waffels.umd.js
   bundles/waffels.umd.js.map
-  bundles/waffels.umd.min.js
-  bundles/waffels.umd.min.js.map
 esm2015
   esm2015/a11y
     esm2015/a11y/a11y.externs.js
@@ -89,10 +81,9 @@ License: MIT
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
-
 
 
 export declare class A11yModule {
@@ -121,7 +112,7 @@ export { }
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -160,7 +151,7 @@ Hello
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -180,11 +171,11 @@ Hello
     var A11yModule = /** @class */ (function () {
         function A11yModule() {
         }
-        A11yModule.decorators = [
-            { type: core.NgModule, args: [{},] }
-        ];
         return A11yModule;
     }());
+    A11yModule.decorators = [
+        { type: core.NgModule, args: [{},] }
+    ];
 
     /**
      * @license
@@ -206,34 +197,11 @@ Hello
 //# sourceMappingURL=waffels-a11y.umd.js.map
 
 
---- bundles/waffels-a11y.umd.min.js ---
-
-/**
- * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
- * License: MIT
- */
-!function(e,o){"object"==typeof exports&&"undefined"!=typeof module?o(exports,require("@angular/core")):"function"==typeof define&&define.amd?define("example/a11y",["exports","@angular/core"],o):o(((e=e||self).example=e.example||{},e.example.a11y={}),e.ng.core)}(this,(function(e,o){"use strict";
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */var n=function(){function e(){}return e.decorators=[{type:o.NgModule,args:[{}]}],e}();
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */e.A11yModule=n,Object.defineProperty(e,"__esModule",{value:!0})}));
-
 --- bundles/waffels-imports.umd.js ---
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -253,12 +221,12 @@ Hello
     var MySecondService = /** @class */ (function () {
         function MySecondService() {
         }
-        MySecondService.ɵprov = i0.ɵɵdefineInjectable({ factory: function MySecondService_Factory() { return new MySecondService(); }, token: MySecondService, providedIn: "root" });
-        MySecondService.decorators = [
-            { type: i0.Injectable, args: [{ providedIn: 'root' },] }
-        ];
         return MySecondService;
     }());
+    MySecondService.ɵprov = i0.ɵɵdefineInjectable({ factory: function MySecondService_Factory() { return new MySecondService(); }, token: MySecondService, providedIn: "root" });
+    MySecondService.decorators = [
+        { type: i0.Injectable, args: [{ providedIn: 'root' },] }
+    ];
 
     /**
      * @license
@@ -271,15 +239,15 @@ Hello
         function MyService(secondService) {
             this.secondService = secondService;
         }
-        MyService.ɵprov = i0.ɵɵdefineInjectable({ factory: function MyService_Factory() { return new MyService(i0.ɵɵinject(MySecondService)); }, token: MyService, providedIn: "root" });
-        MyService.decorators = [
-            { type: i0.Injectable, args: [{ providedIn: 'root' },] }
-        ];
-        MyService.ctorParameters = function () { return [
-            { type: MySecondService }
-        ]; };
         return MyService;
     }());
+    MyService.ɵprov = i0.ɵɵdefineInjectable({ factory: function MyService_Factory() { return new MyService(i0.ɵɵinject(MySecondService)); }, token: MyService, providedIn: "root" });
+    MyService.decorators = [
+        { type: i0.Injectable, args: [{ providedIn: 'root' },] }
+    ];
+    MyService.ctorParameters = function () { return [
+        { type: MySecondService }
+    ]; };
 
     /**
      * @license
@@ -302,42 +270,11 @@ Hello
 //# sourceMappingURL=waffels-imports.umd.js.map
 
 
---- bundles/waffels-imports.umd.min.js ---
-
-/**
- * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
- * License: MIT
- */
-!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("@angular/core")):"function"==typeof define&&define.amd?define("example/imports",["exports","@angular/core"],t):t(((e=e||self).example=e.example||{},e.example.imports={}),e.ng.core)}(this,(function(e,t){"use strict";
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */var n=function(){function e(){}return e.ɵprov=t.ɵɵdefineInjectable({factory:function t(){return new e},token:e,providedIn:"root"}),e.decorators=[{type:t.Injectable,args:[{providedIn:"root"}]}],e}(),r=function(){function e(e){this.secondService=e}return e.ɵprov=t.ɵɵdefineInjectable({factory:function r(){return new e(t.ɵɵinject(n))},token:e,providedIn:"root"}),e.decorators=[{type:t.Injectable,args:[{providedIn:"root"}]}],e.ctorParameters=function(){return[{type:n}]},e}();
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */
-e.MyService=r,e.ɵangular_packages_bazel_test_ng_package_example_imports_imports_a=n,Object.defineProperty(e,"__esModule",{value:!0})}));
-
 --- bundles/waffels-secondary.umd.js ---
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -357,11 +294,11 @@ e.MyService=r,e.ɵangular_packages_bazel_test_ng_package_example_imports_imports
     var SecondaryModule = /** @class */ (function () {
         function SecondaryModule() {
         }
-        SecondaryModule.decorators = [
-            { type: core.NgModule, args: [{},] }
-        ];
         return SecondaryModule;
     }());
+    SecondaryModule.decorators = [
+        { type: core.NgModule, args: [{},] }
+    ];
     var a = 1;
 
     /**
@@ -385,35 +322,11 @@ e.MyService=r,e.ɵangular_packages_bazel_test_ng_package_example_imports_imports
 //# sourceMappingURL=waffels-secondary.umd.js.map
 
 
---- bundles/waffels-secondary.umd.min.js ---
-
-/**
- * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
- * License: MIT
- */
-!function(e,o){"object"==typeof exports&&"undefined"!=typeof module?o(exports,require("@angular/core")):"function"==typeof define&&define.amd?define("example/secondary",["exports","@angular/core"],o):o(((e=e||self).example=e.example||{},e.example.secondary={}),e.ng.core)}(this,(function(e,o){"use strict";
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */var n=function(){function e(){}return e.decorators=[{type:o.NgModule,args:[{}]}],e}();
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */
-e.SecondaryModule=n,e.a=1,Object.defineProperty(e,"__esModule",{value:!0})}));
-
 --- bundles/waffels.umd.js ---
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -433,11 +346,11 @@ e.SecondaryModule=n,e.a=1,Object.defineProperty(e,"__esModule",{value:!0})}));
     var MyModule = /** @class */ (function () {
         function MyModule() {
         }
-        MyModule.decorators = [
-            { type: core.NgModule, args: [{},] }
-        ];
         return MyModule;
     }());
+    MyModule.decorators = [
+        { type: core.NgModule, args: [{},] }
+    ];
 
     /**
      * @license
@@ -458,29 +371,6 @@ e.SecondaryModule=n,e.a=1,Object.defineProperty(e,"__esModule",{value:!0})}));
 })));
 //# sourceMappingURL=waffels.umd.js.map
 
-
---- bundles/waffels.umd.min.js ---
-
-/**
- * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
- * License: MIT
- */
-!function(e,o){"object"==typeof exports&&"undefined"!=typeof module?o(exports,require("@angular/core")):"function"==typeof define&&define.amd?define("example",["exports","@angular/core"],o):o((e=e||self).example={},e.ng.core)}(this,(function(e,o){"use strict";
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */var n=function(){function e(){}return e.decorators=[{type:o.NgModule,args:[{}]}],e}();
-/**
-     * @license
-     * Copyright Google LLC All Rights Reserved.
-     *
-     * Use of this source code is governed by an MIT-style license that can be
-     * found in the LICENSE file at https://angular.io/license
-     */e.MyModule=n,Object.defineProperty(e,"__esModule",{value:!0})}));
 
 --- esm2015/a11y/a11y.externs.js ---
 
@@ -705,10 +595,9 @@ export const a = 1;
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
-
 
 
 export declare class MyModule {
@@ -732,7 +621,7 @@ export { }
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -771,7 +660,7 @@ export { A11yModule };
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -831,7 +720,7 @@ export { MyService, MySecondService as ɵangular_packages_bazel_test_ng_package_
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -871,7 +760,7 @@ export { SecondaryModule, a };
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -910,10 +799,9 @@ export { MyModule };
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
-
 
 export declare class MyService {
     secondService: ɵangular_packages_bazel_test_ng_package_example_imports_imports_a;
@@ -947,7 +835,7 @@ export { }
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 
@@ -992,10 +880,9 @@ export * from './imports/imports';
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
-
 
 export declare const a = 1;
 
@@ -1014,7 +901,7 @@ export { }
 
 /**
  * @license Angular v0.0.0
- * (c) 2010-2020 Google LLC. https://angular.io/
+ * (c) 2010-2021 Google LLC. https://angular.io/
  * License: MIT
  */
 

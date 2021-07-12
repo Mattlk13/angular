@@ -6,9 +6,8 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {ANALYZE_FOR_ENTRY_COMPONENTS, ChangeDetectorRef, Compiler, Component, ComponentFactoryResolver, CUSTOM_ELEMENTS_SCHEMA, Directive, forwardRef, getModuleFactory, HostBinding, Inject, Injectable, InjectionToken, Injector, Input, NgModule, NgModuleRef, Optional, Pipe, Provider, Self, Type, ɵivyEnabled as ivyEnabled, ɵɵdefineNgModule as defineNgModule} from '@angular/core';
-import {Console} from '@angular/core/src/console';
-import {ɵɵdefineInjectable, ɵɵInjectableDef} from '@angular/core/src/di/interface/defs';
+import {ANALYZE_FOR_ENTRY_COMPONENTS, Compiler, Component, ComponentFactoryResolver, CUSTOM_ELEMENTS_SCHEMA, Directive, forwardRef, getModuleFactory, HostBinding, Inject, Injectable, InjectionToken, Injector, Input, NgModule, NgModuleRef, Optional, Pipe, Provider, Self, Type, ɵivyEnabled as ivyEnabled, ɵɵdefineNgModule as defineNgModule} from '@angular/core';
+import {ɵɵdefineInjectable} from '@angular/core/src/di/interface/defs';
 import {getNgModuleDef} from '@angular/core/src/render3/definition';
 import {NgModuleData} from '@angular/core/src/view/types';
 import {tokenKey} from '@angular/core/src/view/util';
@@ -1025,8 +1024,10 @@ function declareTests(config?: {useJit: boolean}) {
       });
 
       it('should throw when trying to instantiate a cyclic dependency', () => {
+        let errorMessage = ivyEnabled ? /NG0200: Circular dependency in DI detected for Car/g :
+                                        /Cannot instantiate cyclic dependency! Car/g;
         expect(() => createInjector([Car, {provide: Engine, useClass: CyclicEngine}]).get(Car))
-            .toThrowError(/Cannot instantiate cyclic dependency! Car/g);
+            .toThrowError(errorMessage);
       });
 
       it('should support null values', () => {
@@ -1418,7 +1419,7 @@ function declareTests(config?: {useJit: boolean}) {
               }
 
               class Bar {
-                static ɵprov: ɵɵInjectableDef<Bar> = ɵɵdefineInjectable({
+                static ɵprov = ɵɵdefineInjectable({
                   token: Bar,
                   factory: () => new Bar(),
                   providedIn: SomeModule,
@@ -1451,7 +1452,7 @@ function declareTests(config?: {useJit: boolean}) {
               }
 
               class Bar {
-                static ɵprov: ɵɵInjectableDef<Bar> = ɵɵdefineInjectable({
+                static ɵprov = ɵɵdefineInjectable({
                   token: Bar,
                   factory: () => new Bar(),
                   providedIn: SomeModule,

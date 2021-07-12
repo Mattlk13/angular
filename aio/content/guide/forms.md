@@ -36,13 +36,13 @@ This tutorial teaches you how to do the following:
 * Use `ngModel` to create two-way data bindings for reading and writing input-control values.
 * Provide visual feedback using special CSS classes that track the state of the controls.
 * Display validation errors to users and enable or disable form controls based on the form status.
-* Share information across HTML elements using [template reference variables](guide/template-syntax#template-reference-variables-var).
+* Share information across HTML elements using [template reference variables](guide/template-reference-variables).
 
 ## Prerequisites
 
 Before going further into template-driven forms, you should have a basic understanding of the following.
 
-* TypeScript and HTML5 programming.
+* [TypeScript](https://www.typescriptlang.org/ "The TypeScript language") and HTML5 programming.
 * Angular app-design fundamentals, as described in [Angular Concepts](guide/architecture "Introduction to Angular concepts.").
 * The basics of [Angular template syntax](guide/template-syntax "Template syntax guide").
 * The form-design concepts that are presented in [Introduction to Forms](guide/forms-overview "Overview of Angular forms.").
@@ -72,7 +72,7 @@ Every hero needs a job. This form helps the agency match the right hero with the
 The form highlights some design features that make it easier to use. For instance, the two required fields have a green bar on the left to make them easy to spot. These fields have initial values, so the form is valid and the **Submit** button is enabled.
 
 As you work with this form, you will learn how to include validation logic, how to customize the presentation with standard CSS, and how to handle error conditions to ensure valid input.
-If the user deletes the hero name, for example, the form becomes invalid. The app detects the changed status, and displays a validation error in an attention-grabbing style.
+If the user deletes the hero name, for example, the form becomes invalid. The application detects the changed status, and displays a validation error in an attention-grabbing style.
 In addition, the **Submit** button is disabled, and the "required" bar to the left of the input control changes from green to red.
 
 <div class="lightbox">
@@ -93,7 +93,7 @@ In the course of this tutorial, you bind a sample form to data and handle user i
    * Add custom CSS to provide visual feedback on the status.
    * Show and hide validation-error messages.
 4. Respond to a native HTML button-click event by adding to the model data.
-5. Handle form submission using the [`ngSubmit`(api/forms/NgForm#properties)] output property of the form.
+5. Handle form submission using the [`ngSubmit`](api/forms/NgForm#properties) output property of the form.
    * Disable the **Submit** button until the form is valid.
    * After submit, swap out the finished form for different content on the page.
 
@@ -137,8 +137,8 @@ template using the `<app-hero-form>` tag.
    The **Submit** button has some classes on it for styling.
    At this point, the form  layout is all plain HTML5, with no bindings or directives.
 
-6. The sample form uses some style classes from [Twitter Bootstrap](http://getbootstrap.com/css/): `container`, `form-group`, `form-control`, and `btn`.
-   To use these styles, the app's style sheet imports the library.
+6. The sample form uses some style classes from [Twitter Bootstrap](https://getbootstrap.com/css/): `container`, `form-group`, `form-control`, and `btn`.
+   To use these styles, the application's style sheet imports the library.
 
    <code-example path="forms/src/styles.1.css" header="src/styles.css"></code-example>
 
@@ -148,7 +148,7 @@ template using the `<app-hero-form>` tag.
 
    <code-example path="forms/src/app/hero-form/hero-form.component.html" header="src/app/hero-form/hero-form.component.html (powers)" region="powers"></code-example>
 
-If you run the app right now, you see the list of powers in the selection control. The input elements are not yet bound to data values or events, so they are still blank and have no behavior.
+If you run the application right now, you see the list of powers in the selection control. The input elements are not yet bound to data values or events, so they are still blank and have no behavior.
 
 <div class="lightbox">
   <img src="generated/images/guide/forms/hero-form-3.png" alt="Early form with no binding">
@@ -184,7 +184,7 @@ The note reminds you to remove the diagnostic lines when you have finished obser
 
 When you imported the `FormsModule` in your component, Angular automatically created and attached an [NgForm](api/forms/NgForm "API reference for NgForm") directive to the `<form>` tag in the template (because `NgForm` has the selector `form` that matches `<form>` elements).
 
-To get access to the `NgForm` and the overall form status, declare a [template reference variable](guide/template-syntax#template-reference-variables-var).
+To get access to the `NgForm` and the overall form status, declare a [template reference variable](guide/template-reference-variables).
 
 1. Edit the template file `hero-form.component.html`.
 
@@ -220,7 +220,7 @@ Any unique value will do, but using a descriptive name is helpful.
 
 2. You can now remove the diagnostic messages that show interpolated values.
 
-3. To confirm that two-way data binding works for the entire hero model, add a new binding at the top to the component's `diagnostic` property.
+3. To confirm that two-way data binding works for the entire hero model, add a new text binding with the [`json` pipe](api/common/JsonPipe) (which would serialize the data to a string) at the top to the component's template.
 
 After these revisions, the form template should look like the following:
 
@@ -230,7 +230,7 @@ After these revisions, the form template should look like the following:
 
 * Each `<input>` element also has the required `name` property that Angular uses to register the control with the form.
 
-If you run the app now and change every hero model property, the form might display like this:
+If you run the application now and change every hero model property, the form might display like this:
 
 <div class="lightbox">
   <img src="generated/images/guide/forms/ng-model-in-action-2.png" alt="ngModel in action">
@@ -238,7 +238,7 @@ If you run the app now and change every hero model property, the form might disp
 
 The diagnostic near the top of the form confirms that all of your changes are reflected in the model.
 
-4. When you have observed the effects, you can delete the `{{diagnostic}}` binding.
+4. When you have observed the effects, you can delete the `{{ model | json }}` text binding.
 
 ## Track control states
 
@@ -313,6 +313,8 @@ Angular sets special CSS classes on the control element to reflect the state, as
   </tr>
 
 </table>
+
+Additionally, Angular applies the `ng-submitted` class to `<form>` elements upon submission. This class does *not* apply to inner controls.
 
 You use these CSS classes to define the styles for your control based on its status.
 
@@ -433,7 +435,7 @@ To let form users add a new hero, you will add a **New Hero** button that respon
 
 5. Enter a name and click **New Hero** again.
 
-   Now the app displays a _Name is required_ error message, because the input box is no longer pristine.
+   Now the application displays a _Name is required_ error message, because the input box is no longer pristine.
    The form remembers that you entered a name before clicking **New Hero**.
 
 6. To restore the pristine state of the form controls, clear all of the flags imperatively by calling the form's `reset()` method after calling the `newHero()` method.
@@ -467,7 +469,7 @@ You will bind the form property that indicates its overall validity to the **Sub
 3. Run the application now. Notice that the button is enabled&mdash;although
 it doesn't do anything useful yet.
 
-4. Delete the **Name** value. This violates the "required" rule, so it displays the error message&emdash;and notice that it also disables the **Submit** button.
+4. Delete the **Name** value. This violates the "required" rule, so it displays the error message&mdash;and notice that it also disables the **Submit** button.
 
 
    You didn't have to explicitly wire the button's enabled state to the form's validity.

@@ -29,11 +29,21 @@ export function absoluteFrom(path: string): AbsoluteFsPath {
   return fs.resolve(path);
 }
 
+const ABSOLUTE_PATH = Symbol('AbsolutePath');
+
 /**
- * Extract an `AbsoluteFsPath` from a `ts.SourceFile`.
+ * Extract an `AbsoluteFsPath` from a `ts.SourceFile`-like object.
  */
-export function absoluteFromSourceFile(sf: ts.SourceFile): AbsoluteFsPath {
-  return fs.resolve(sf.fileName);
+export function absoluteFromSourceFile(sf: {fileName: string}): AbsoluteFsPath {
+  const sfWithPatch = sf as {fileName: string, [ABSOLUTE_PATH]?: AbsoluteFsPath};
+
+  if (sfWithPatch[ABSOLUTE_PATH] === undefined) {
+    sfWithPatch[ABSOLUTE_PATH] = fs.resolve(sfWithPatch.fileName);
+  }
+
+  // Non-null assertion needed since TS doesn't narrow the type of fields that use a symbol as a key
+  // apparently.
+  return sfWithPatch[ABSOLUTE_PATH]!;
 }
 
 /**
@@ -83,7 +93,7 @@ export function isRooted(path: string): boolean {
 /**
  * Static access to `relative`.
  */
-export function relative<T extends PathString>(from: T, to: T): PathSegment {
+export function relative<T extends PathString>(from: T, to: T): PathSegment|AbsoluteFsPath {
   return fs.relative(from, to);
 }
 
@@ -92,4 +102,24 @@ export function relative<T extends PathString>(from: T, to: T): PathSegment {
  */
 export function basename(filePath: PathString, extension?: string): PathSegment {
   return fs.basename(filePath, extension) as PathSegment;
+}
+
+/**
+ * Returns true if the given path is locally relative.
+ *
+ * This is used to work out if the given path is relative (i.e. not absolute) but also is not
+ * escaping the current directory.
+ */
+export function isLocalRelativePath(relativePath: string): boolean {
+  return !isRooted(relativePath) && !relativePath.startsWith('..');
+}
+
+/**
+ * Converts a path to a form suitable for use as a relative module import specifier.
+ *
+ * In other words it adds the `./` to the path if it is locally relative.
+ */
+export function toRelativeImport(relativePath: PathSegment|AbsoluteFsPath): PathSegment|
+    AbsoluteFsPath {
+  return isLocalRelativePath(relativePath) ? `./${relativePath}` as PathSegment : relativePath;
 }

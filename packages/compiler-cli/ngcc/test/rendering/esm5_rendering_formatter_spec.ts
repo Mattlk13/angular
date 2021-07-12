@@ -12,16 +12,15 @@ import * as ts from 'typescript';
 import {absoluteFrom, absoluteFromSourceFile, AbsoluteFsPath, getFileSystem, getSourceFileOrError} from '../../../src/ngtsc/file_system';
 import {runInEachFileSystem, TestFile} from '../../../src/ngtsc/file_system/testing';
 import {NoopImportRewriter} from '../../../src/ngtsc/imports';
-import {getDeclaration} from '../../../src/ngtsc/testing';
+import {MockLogger} from '../../../src/ngtsc/logging/testing';
+import {getDeclaration, loadTestFiles} from '../../../src/ngtsc/testing';
 import {ImportManager} from '../../../src/ngtsc/translator';
-import {loadTestFiles} from '../../../test/helpers';
 import {DecorationAnalyzer} from '../../src/analysis/decoration_analyzer';
 import {NgccReferencesRegistry} from '../../src/analysis/ngcc_references_registry';
 import {SwitchMarkerAnalyzer} from '../../src/analysis/switch_marker_analyzer';
 import {IMPORT_PREFIX} from '../../src/constants';
 import {Esm5ReflectionHost} from '../../src/host/esm5_host';
 import {Esm5RenderingFormatter} from '../../src/rendering/esm5_rendering_formatter';
-import {MockLogger} from '../helpers/mock_logger';
 import {makeTestEntryPointBundle} from '../helpers/utils';
 
 function setup(file: {name: AbsoluteFsPath, contents: string}) {
@@ -35,7 +34,7 @@ function setup(file: {name: AbsoluteFsPath, contents: string}) {
       new DecorationAnalyzer(fs, bundle, host, referencesRegistry).analyzeProgram();
   const switchMarkerAnalyses = new SwitchMarkerAnalyzer(host, bundle.entryPoint.packagePath)
                                    .analyzeProgram(bundle.src.program);
-  const renderer = new Esm5RenderingFormatter(host, false);
+  const renderer = new Esm5RenderingFormatter(fs, host, false);
   const importManager = new ImportManager(new NoopImportRewriter(), IMPORT_PREFIX);
   return {
     host,
@@ -189,8 +188,8 @@ export { F };
         renderer.addImports(
             output,
             [
-              {specifier: '@angular/core', qualifier: 'i0'},
-              {specifier: '@angular/common', qualifier: 'i1'}
+              {specifier: '@angular/core', qualifier: ts.createIdentifier('i0')},
+              {specifier: '@angular/common', qualifier: ts.createIdentifier('i1')}
             ],
             sourceFile);
         expect(output.toString()).toContain(`/* A copyright notice */
@@ -264,7 +263,8 @@ var A = (function() {`);
         const file = getSourceFileOrError(program, _('/node_modules/test-package/some/file.js'));
         const output = new MagicString(PROGRAM.contents);
         renderer.addConstants(output, 'var x = 3;', file);
-        renderer.addImports(output, [{specifier: '@angular/core', qualifier: 'i0'}], file);
+        renderer.addImports(
+            output, [{specifier: '@angular/core', qualifier: ts.createIdentifier('i0')}], file);
         expect(output.toString()).toContain(`
 import {Directive} from '@angular/core';
 import * as i0 from '@angular/core';

@@ -28,7 +28,8 @@ import {Tree, TreeNode} from './utils/tree';
  * and the resolved data.
  * Use the `ActivatedRoute` properties to traverse the tree from any node.
  *
- * ### Example
+ * The following fragment shows how a component gets the root node
+ * of the current state to establish its own route tree:
  *
  * ```
  * @Component({templateUrl:'template.html'})
@@ -44,6 +45,7 @@ import {Tree, TreeNode} from './utils/tree';
  * ```
  *
  * @see `ActivatedRoute`
+ * @see [Getting route information](guide/router#getting-route-information)
  *
  * @publicApi
  */
@@ -93,8 +95,17 @@ export function createEmptyStateSnapshot(
  * that is loaded in an outlet.
  * Use to traverse the `RouterState` tree and extract information from nodes.
  *
+ * The following example shows how to construct a component using information from a
+ * currently activated route.
+ *
+ * Note: the observables in this class only emit when the current and previous values differ based
+ * on shallow equality. For example, changing deeply nested properties in resolved `data` will not
+ * cause the `ActivatedRoute.data` `Observable` to emit a new value.
+ *
  * {@example router/activated-route/module.ts region="activated-route"
  *     header="activated-route.component.ts"}
+ *
+ * @see [Getting route information](guide/router#getting-route-information)
  *
  * @publicApi
  */
@@ -119,7 +130,7 @@ export class ActivatedRoute {
       /** An observable of the query parameters shared by all the routes. */
       public queryParams: Observable<Params>,
       /** An observable of the URL fragment shared by all the routes. */
-      public fragment: Observable<string>,
+      public fragment: Observable<string|null>,
       /** An observable of the static and resolved data of this route. */
       public data: Observable<Data>,
       /** The outlet name of the route, a constant. */
@@ -249,6 +260,9 @@ function flattenInherited(pathFromRoot: ActivatedRouteSnapshot[]): Inherited {
  * outlet at a particular moment in time. ActivatedRouteSnapshot can also be used to
  * traverse the router state tree.
  *
+ * The following example initializes a component with route information extracted
+ * from the snapshot of the root node at the time of creation.
+ *
  * ```
  * @Component({templateUrl:'./my-component.html'})
  * class MyComponent {
@@ -288,12 +302,30 @@ export class ActivatedRouteSnapshot {
   constructor(
       /** The URL segments matched by this route */
       public url: UrlSegment[],
-      /** The matrix parameters scoped to this route */
+      /**
+       *  The matrix parameters scoped to this route.
+       *
+       *  You can compute all params (or data) in the router state or to get params outside
+       *  of an activated component by traversing the `RouterState` tree as in the following
+       *  example:
+       *  ```
+       *  collectRouteParams(router: Router) {
+       *    let params = {};
+       *    let stack: ActivatedRouteSnapshot[] = [router.routerState.snapshot.root];
+       *    while (stack.length > 0) {
+       *      const route = stack.pop()!;
+       *      params = {...params, ...route.params};
+       *      stack.push(...route.children);
+       *    }
+       *    return params;
+       *  }
+       *  ```
+       */
       public params: Params,
       /** The query parameters shared by all the routes */
       public queryParams: Params,
       /** The URL fragment shared by all the routes */
-      public fragment: string,
+      public fragment: string|null,
       /** The static and resolved data of this route */
       public data: Data,
       /** The outlet name of the route */
@@ -361,8 +393,8 @@ export class ActivatedRouteSnapshot {
  * This is a tree of activated route snapshots. Every node in this tree knows about
  * the "consumed" URL segments, the extracted parameters, and the resolved data.
  *
- * @usageNotes
- * ### Example
+ * The following example shows how a component is initialized with information
+ * from the snapshot of the root node's state at the time of creation.
  *
  * ```
  * @Component({templateUrl:'template.html'})

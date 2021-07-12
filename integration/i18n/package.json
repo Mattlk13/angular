@@ -11,7 +11,7 @@
     "rxjs": "file:../../node_modules/rxjs",
     "typescript": "file:../../node_modules/typescript",
     "tslib": "file:../../node_modules/tslib",
-    "zone.js": "file:../../dist/zone.js-dist/zone.js"
+    "zone.js": "file:../../dist/zone.js-dist/archive/zone.js.tgz"
   },
   "devDependencies": {
     "@types/jasmine": "file:../../node_modules/@types/jasmine",
@@ -29,7 +29,7 @@
   },
   "scripts": {
     "closure": "google-closure-compiler --flagfile closure.conf",
-    "test": "ngc && yarn run closure && concurrently \"yarn run serve\" \"yarn run protractor\" --kill-others --success first && npm run test-locale-folder",
+    "test": "ngc && yarn run closure && concurrently \"yarn run serve\" \"yarn run protractor\" --kill-others --success first && yarn test-locale-folder",
     "test-locale-folder": "node test-locale-folder.js",
     "serve": "lite-server -c e2e/browser.config.json",
     "preprotractor": "tsc -p e2e",

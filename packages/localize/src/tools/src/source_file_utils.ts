@@ -5,6 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+import {absoluteFrom, AbsoluteFsPath, getFileSystem, PathManipulation} from '@angular/compiler-cli/src/ngtsc/file_system';
 import {ɵisMissingTranslationError, ɵmakeTemplateObject, ɵParsedTranslation, ɵSourceLocation, ɵtranslate} from '@angular/localize';
 import {NodePath} from '@babel/traverse';
 import * as t from '@babel/types';
@@ -35,7 +36,9 @@ export function isNamedIdentifier(
 
 /**
  * Is the given `identifier` declared globally.
+ *
  * @param identifier The identifier to check.
+ * @publicApi used by CLI
  */
 export function isGlobalIdentifier(identifier: NodePath<t.Identifier>) {
   return !identifier.scope || !identifier.scope.hasBinding(identifier.node.name);
@@ -45,6 +48,7 @@ export function isGlobalIdentifier(identifier: NodePath<t.Identifier>) {
  * Build a translated expression to replace the call to `$localize`.
  * @param messageParts The static parts of the message.
  * @param substitutions The expressions to substitute into the message.
+ * @publicApi used by CLI
  */
 export function buildLocalizeReplacement(
     messageParts: TemplateStringsArray, substitutions: readonly t.Expression[]): t.Expression {
@@ -64,9 +68,14 @@ export function buildLocalizeReplacement(
  * to a helper function like `__makeTemplateObject`.
  *
  * @param call The AST node of the call to process.
+ * @param fs The file system to use when computing source-map paths. If not provided then it uses
+ *     the "current" FileSystem.
+ * @publicApi used by CLI
  */
-export function unwrapMessagePartsFromLocalizeCall(call: NodePath<t.CallExpression>):
-    TemplateStringsArray {
+export function unwrapMessagePartsFromLocalizeCall(
+    call: NodePath<t.CallExpression>,
+    fs: PathManipulation = getFileSystem(),
+    ): [TemplateStringsArray, (ɵSourceLocation | undefined)[]] {
   let cooked = call.get('arguments')[0];
 
   if (cooked === undefined) {
@@ -80,7 +89,7 @@ export function unwrapMessagePartsFromLocalizeCall(call: NodePath<t.CallExpressi
   // If there is no call to `__makeTemplateObject(...)`, then `raw` must be the same as `cooked`.
   let raw = cooked;
 
-  // Check for cached call of the form `x || x = __makeTemplateObject(...)`
+  // Check for a memoized form: `x || x = ...`
   if (cooked.isLogicalExpression() && cooked.node.operator === '||' &&
       cooked.get('left').isIdentifier()) {
     const right = cooked.get('right');
@@ -96,15 +105,22 @@ export function unwrapMessagePartsFromLocalizeCall(call: NodePath<t.CallExpressi
         // This is a minified sequence expression, where the first two expressions in the sequence
         // are assignments of the cooked and raw arrays respectively.
         const [first, second] = expressions;
-        if (first.isAssignmentExpression() && second.isAssignmentExpression()) {
+        if (first.isAssignmentExpression()) {
           cooked = first.get('right');
           if (!cooked.isExpression()) {
             throw new BabelParseError(
                 first.node, 'Unexpected cooked value, expected an expression.');
           }
-          raw = second.get('right');
-          if (!raw.isExpression()) {
-            throw new BabelParseError(second.node, 'Unexpected raw value, expected an expression.');
+          if (second.isAssignmentExpression()) {
+            raw = second.get('right');
+            if (!raw.isExpression()) {
+              throw new BabelParseError(
+                  second.node, 'Unexpected raw value, expected an expression.');
+            }
+          } else {
+            // If the second expression is not an assignment then it is probably code to take a copy
+            // of the cooked array. For example: `raw || (raw=cooked.slice(0))`.
+            raw = cooked;
           }
         }
       }
@@ -136,34 +152,70 @@ export function unwrapMessagePartsFromLocalizeCall(call: NodePath<t.CallExpressi
     raw = arg2 !== undefined ? arg2 : cooked;
   }
 
-  const cookedStrings = unwrapStringLiteralArray(cooked.node);
-  const rawStrings = unwrapStringLiteralArray(raw.node);
-  return ɵmakeTemplateObject(cookedStrings, rawStrings);
+  const [cookedStrings] = unwrapStringLiteralArray(cooked, fs);
+  const [rawStrings, rawLocations] = unwrapStringLiteralArray(raw, fs);
+  return [ɵmakeTemplateObject(cookedStrings, rawStrings), rawLocations];
 }
 
-
-export function unwrapSubstitutionsFromLocalizeCall(call: t.CallExpression): t.Expression[] {
-  const expressions = call.arguments.splice(1);
+/**
+ * Parse the localize call expression to extract the arguments that hold the substition expressions.
+ *
+ * @param call The AST node of the call to process.
+ * @param fs The file system to use when computing source-map paths. If not provided then it uses
+ *     the "current" FileSystem.
+ * @publicApi used by CLI
+ */
+export function unwrapSubstitutionsFromLocalizeCall(
+    call: NodePath<t.CallExpression>,
+    fs: PathManipulation = getFileSystem()): [t.Expression[], (ɵSourceLocation | undefined)[]] {
+  const expressions = call.get('arguments').splice(1);
   if (!isArrayOfExpressions(expressions)) {
-    const badExpression = expressions.find(expression => !t.isExpression(expression))!;
+    const badExpression = expressions.find(expression => !expression.isExpression())!;
     throw new BabelParseError(
-        badExpression,
+        badExpression.node,
         'Invalid substitutions for `$localize` (expected all substitution arguments to be expressions).');
   }
-  return expressions;
+  return [
+    expressions.map(path => path.node), expressions.map(expression => getLocation(fs, expression))
+  ];
 }
 
-export function unwrapMessagePartsFromTemplateLiteral(elements: t.TemplateElement[]):
-    TemplateStringsArray {
+/**
+ * Parse the tagged template literal to extract the message parts.
+ *
+ * @param elements The elements of the template literal to process.
+ * @param fs The file system to use when computing source-map paths. If not provided then it uses
+ *     the "current" FileSystem.
+ * @publicApi used by CLI
+ */
+export function unwrapMessagePartsFromTemplateLiteral(
+    elements: NodePath<t.TemplateElement>[], fs: PathManipulation = getFileSystem()):
+    [TemplateStringsArray, (ɵSourceLocation | undefined)[]] {
   const cooked = elements.map(q => {
-    if (q.value.cooked === undefined) {
+    if (q.node.value.cooked === undefined) {
       throw new BabelParseError(
-          q, `Unexpected undefined message part in "${elements.map(q => q.value.cooked)}"`);
+          q.node,
+          `Unexpected undefined message part in "${elements.map(q => q.node.value.cooked)}"`);
     }
-    return q.value.cooked;
+    return q.node.value.cooked;
   });
-  const raw = elements.map(q => q.value.raw);
-  return ɵmakeTemplateObject(cooked, raw);
+  const raw = elements.map(q => q.node.value.raw);
+  const locations = elements.map(q => getLocation(fs, q));
+  return [ɵmakeTemplateObject(cooked, raw), locations];
+}
+
+/**
+ * Parse the tagged template literal to extract the interpolation expressions.
+ *
+ * @param quasi The AST node of the template literal to process.
+ * @param fs The file system to use when computing source-map paths. If not provided then it uses
+ *     the "current" FileSystem.
+ * @publicApi used by CLI
+ */
+export function unwrapExpressionsFromTemplateLiteral(
+    quasi: NodePath<t.TemplateLiteral>,
+    fs: PathManipulation = getFileSystem()): [t.Expression[], (ɵSourceLocation | undefined)[]] {
+  return [quasi.node.expressions, quasi.get('expressions').map(e => getLocation(fs, e))];
 }
 
 /**
@@ -183,14 +235,20 @@ export function wrapInParensIfNecessary(expression: t.Expression): t.Expression 
 
 /**
  * Extract the string values from an `array` of string literals.
+ *
  * @param array The array to unwrap.
+ * @param fs The file system to use when computing source-map paths. If not provided then it uses
+ *     the "current" FileSystem.
  */
-export function unwrapStringLiteralArray(array: t.Expression): string[] {
-  if (!isStringLiteralArray(array)) {
+export function unwrapStringLiteralArray(
+    array: NodePath<t.Expression>,
+    fs: PathManipulation = getFileSystem()): [string[], (ɵSourceLocation | undefined)[]] {
+  if (!isStringLiteralArray(array.node)) {
     throw new BabelParseError(
-        array, 'Unexpected messageParts for `$localize` (expected an array of strings).');
+        array.node, 'Unexpected messageParts for `$localize` (expected an array of strings).');
   }
-  return array.elements.map((str: t.StringLiteral) => str.value);
+  const elements = array.get('elements') as NodePath<t.StringLiteral>[];
+  return [elements.map(str => str.node.value), elements.map(str => getLocation(fs, str))];
 }
 
 /**
@@ -294,8 +352,8 @@ export function isStringLiteralArray(node: t.Node): node is t.Expression&
  * Are all the given `nodes` expressions?
  * @param nodes The nodes to test.
  */
-export function isArrayOfExpressions(nodes: t.Node[]): nodes is t.Expression[] {
-  return nodes.every(element => t.isExpression(element));
+export function isArrayOfExpressions(paths: NodePath<t.Node>[]): paths is NodePath<t.Expression>[] {
+  return paths.every(element => element.isExpression());
 }
 
 /** Options that affect how the `makeEsXXXTranslatePlugin()` functions work. */
@@ -308,6 +366,7 @@ export interface TranslatePluginOptions {
  * Translate the text of the given message, using the given translations.
  *
  * Logs as warning if the translation is not available
+ * @publicApi used by CLI
  */
 export function translate(
     diagnostics: Diagnostics, translations: Record<string, ɵParsedTranslation>,
@@ -341,21 +400,69 @@ export function isBabelParseError(e: any): e is BabelParseError {
   return e.type === 'BabelParseError';
 }
 
-export function buildCodeFrameError(path: NodePath, e: BabelParseError): string {
-  const filename = path.hub.file.opts.filename || '(unknown file)';
+export function buildCodeFrameError(
+    fs: PathManipulation, path: NodePath, e: BabelParseError): string {
+  let filename = path.hub.file.opts.filename;
+  if (filename) {
+    filename = fs.resolve(filename);
+    let cwd = path.hub.file.opts.cwd;
+    if (cwd) {
+      cwd = fs.resolve(cwd);
+      filename = fs.relative(cwd, filename);
+    }
+  } else {
+    filename = '(unknown file)';
+  }
   const message = path.hub.file.buildCodeFrameError(e.node, e.message).message;
   return `${filename}: ${message}`;
 }
 
-export function getLocation(path: NodePath): ɵSourceLocation|undefined {
-  const location = path.node.loc;
-  const file = path.hub.file.opts.filename;
-
-  if (!location || !file) {
+export function getLocation(
+    fs: PathManipulation, startPath: NodePath, endPath?: NodePath): ɵSourceLocation|undefined {
+  const startLocation = startPath.node.loc;
+  const file = getFileFromPath(fs, startPath);
+  if (!startLocation || !file) {
     return undefined;
   }
 
-  // Note we clone the `start` and `end` objects so that their prototype chains,
-  // from Babel, do not leak into our code.
-  return {start: {...location.start}, end: {...location.end}, file};
+  const endLocation =
+      endPath && getFileFromPath(fs, endPath) === file && endPath.node.loc || startLocation;
+
+  return {
+    start: getLineAndColumn(startLocation.start),
+    end: getLineAndColumn(endLocation.end),
+    file,
+    text: getText(startPath),
+  };
+}
+
+export function serializeLocationPosition(location: ɵSourceLocation): string {
+  const endLineString = location.end !== undefined && location.end.line !== location.start.line ?
+      `,${location.end.line + 1}` :
+      '';
+  return `${location.start.line + 1}${endLineString}`;
+}
+
+function getFileFromPath(fs: PathManipulation, path: NodePath|undefined): AbsoluteFsPath|null {
+  const opts = path?.hub.file.opts;
+  const filename = opts?.filename;
+  if (!filename) {
+    return null;
+  }
+  const relativePath = fs.relative(opts.cwd, filename);
+  const root = opts.generatorOpts.sourceRoot ?? opts.cwd;
+  const absPath = fs.resolve(root, relativePath);
+  return absPath;
+}
+
+function getLineAndColumn(loc: {line: number, column: number}): {line: number, column: number} {
+  // Note we want 0-based line numbers but Babel returns 1-based.
+  return {line: loc.line - 1, column: loc.column};
+}
+
+function getText(path: NodePath): string|undefined {
+  if (path.node.start === null || path.node.end === null) {
+    return undefined;
+  }
+  return path.hub.file.code.substring(path.node.start, path.node.end);
 }

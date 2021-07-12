@@ -7,9 +7,9 @@
  */
 
 import {ɵgetDOM as getDOM} from '@angular/common';
-import {Component, Directive, forwardRef, Type} from '@angular/core';
-import {async, ComponentFixture, fakeAsync, TestBed, tick} from '@angular/core/testing';
-import {AbstractControl, AsyncValidator, COMPOSITION_BUFFER_MODE, FormControl, FormsModule, NG_ASYNC_VALIDATORS, NgForm, NgModel} from '@angular/forms';
+import {Component, Directive, forwardRef, Input, Type, ViewChild} from '@angular/core';
+import {ComponentFixture, fakeAsync, TestBed, tick, waitForAsync} from '@angular/core/testing';
+import {AbstractControl, AsyncValidator, COMPOSITION_BUFFER_MODE, ControlValueAccessor, FormControl, FormsModule, MaxValidator, MinValidator, NG_ASYNC_VALIDATORS, NG_VALIDATORS, NG_VALUE_ACCESSOR, NgForm, NgModel, Validator} from '@angular/forms';
 import {By} from '@angular/platform-browser/src/dom/debug/by';
 import {dispatchEvent, sortedClassList} from '@angular/platform-browser/testing/src/browser_util';
 import {merge} from 'rxjs';
@@ -168,7 +168,7 @@ import {NgModelCustomComp, NgModelCustomWrapper} from './value_accessor_integrat
            expect(form.value).toEqual({});
          }));
 
-      it('should set status classes with ngModel', async(() => {
+      it('should set status classes with ngModel', waitForAsync(() => {
            const fixture = initTest(NgModelForm);
            fixture.componentInstance.name = 'aa';
            fixture.detectChanges();
@@ -187,6 +187,21 @@ import {NgModelCustomComp, NgModelCustomWrapper} from './value_accessor_integrat
              dispatchEvent(input, 'input');
              fixture.detectChanges();
              expect(sortedClassList(input)).toEqual(['ng-dirty', 'ng-touched', 'ng-valid']);
+
+             const formEl = fixture.debugElement.query(By.css('form')).nativeElement;
+             dispatchEvent(formEl, 'submit');
+             fixture.detectChanges();
+
+             expect(sortedClassList(formEl)).toEqual([
+               'ng-dirty', 'ng-submitted', 'ng-touched', 'ng-valid'
+             ]);
+             expect(sortedClassList(input)).not.toContain('ng-submitted');
+
+             dispatchEvent(formEl, 'reset');
+             fixture.detectChanges();
+
+             expect(sortedClassList(formEl)).toEqual(['ng-pristine', 'ng-untouched', 'ng-valid']);
+             expect(sortedClassList(input)).not.toContain('ng-submitted');
            });
          }));
 
@@ -212,7 +227,7 @@ import {NgModelCustomComp, NgModelCustomWrapper} from './value_accessor_integrat
            });
          }));
 
-      it('should set status classes with ngModelGroup and ngForm', async(() => {
+      it('should set status classes with ngModelGroup and ngForm', waitForAsync(() => {
            const fixture = initTest(NgModelGroupForm);
            fixture.componentInstance.first = '';
            fixture.detectChanges();
@@ -244,8 +259,51 @@ import {NgModelCustomComp, NgModelCustomWrapper} from './value_accessor_integrat
 
              expect(sortedClassList(modelGroup)).toEqual(['ng-dirty', 'ng-touched', 'ng-valid']);
              expect(sortedClassList(form)).toEqual(['ng-dirty', 'ng-touched', 'ng-valid']);
+
+             const formEl = fixture.debugElement.query(By.css('form')).nativeElement;
+             dispatchEvent(formEl, 'submit');
+             fixture.detectChanges();
+
+             expect(sortedClassList(formEl)).toEqual([
+               'ng-dirty', 'ng-submitted', 'ng-touched', 'ng-valid'
+             ]);
            });
          }));
+
+      it('should set status classes involving nested FormGroups', () => {
+        const fixture = initTest(NgModelNestedForm);
+        fixture.componentInstance.first = '';
+        fixture.componentInstance.other = '';
+        fixture.detectChanges();
+
+        const form = fixture.debugElement.query(By.css('form')).nativeElement;
+        const modelGroup = fixture.debugElement.query(By.css('[ngModelGroup]')).nativeElement;
+        const input = fixture.debugElement.query(By.css('input')).nativeElement;
+
+        fixture.whenStable().then(() => {
+          fixture.detectChanges();
+          expect(sortedClassList(modelGroup)).toEqual(['ng-pristine', 'ng-untouched', 'ng-valid']);
+
+          expect(sortedClassList(form)).toEqual(['ng-pristine', 'ng-untouched', 'ng-valid']);
+
+          const formEl = fixture.debugElement.query(By.css('form')).nativeElement;
+          dispatchEvent(formEl, 'submit');
+          fixture.detectChanges();
+
+          expect(sortedClassList(modelGroup)).toEqual(['ng-pristine', 'ng-untouched', 'ng-valid']);
+          expect(sortedClassList(form)).toEqual([
+            'ng-pristine', 'ng-submitted', 'ng-untouched', 'ng-valid'
+          ]);
+          expect(sortedClassList(input)).not.toContain('ng-submitted');
+
+          dispatchEvent(formEl, 'reset');
+          fixture.detectChanges();
+
+          expect(sortedClassList(modelGroup)).toEqual(['ng-pristine', 'ng-untouched', 'ng-valid']);
+          expect(sortedClassList(form)).toEqual(['ng-pristine', 'ng-untouched', 'ng-valid']);
+          expect(sortedClassList(input)).not.toContain('ng-submitted');
+        });
+      });
 
       it('should not create a template-driven form when ngNoForm is used', () => {
         const fixture = initTest(NgNoFormComp);
@@ -1179,7 +1237,7 @@ import {NgModelCustomComp, NgModelCustomWrapper} from './value_accessor_integrat
            expect(input.nativeElement.disabled).toBe(true);
          }));
 
-      it('should disable a custom control if disabled attr is added', async(() => {
+      it('should disable a custom control if disabled attr is added', waitForAsync(() => {
            const fixture = initTest(NgModelCustomWrapper, NgModelCustomComp);
            fixture.componentInstance.name = 'Nancy';
            fixture.componentInstance.isDisabled = true;
@@ -1511,6 +1569,639 @@ import {NgModelCustomComp, NgModelCustomWrapper} from './value_accessor_integrat
            expect(onNgModelChange).toHaveBeenCalledTimes(2);
            tick();
          }));
+
+      it('should validate max', fakeAsync(() => {
+           const fixture = initTest(NgModelMaxValidator);
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('max')).toEqual('10');
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+
+           input.value = 11;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.max.errors).toEqual({max: {max: 10, actual: 11}});
+
+           input.value = 9;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+
+           fixture.componentInstance.max = 0;
+           fixture.detectChanges();
+           tick();
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('max')).toEqual('0');
+           expect(form.valid).toEqual(false);
+           expect(form.controls.max.errors).toEqual({max: {max: 0, actual: 9}});
+
+           input.value = 0;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+         }));
+
+      it('should validate max for float number', fakeAsync(() => {
+           const fixture = initTest(NgModelMaxValidator);
+           fixture.componentInstance.max = 10.25;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('max')).toEqual('10.25');
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+
+           input.value = 10.25;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+
+           input.value = 10.15;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+
+           input.value = 10.35;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.max.errors).toEqual({max: {max: 10.25, actual: 10.35}});
+         }));
+
+      it('should apply max validation when control value is defined as a string', fakeAsync(() => {
+           const fixture = initTest(NgModelMaxValidator);
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '11';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('max')).toEqual('10');
+           expect(form.valid).toEqual(false);
+           expect(form.controls.max.errors).toEqual({max: {max: 10, actual: 11}});
+
+           input.value = '9';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+         }));
+
+      it('should re-validate if max changes', fakeAsync(() => {
+           const fixture = initTest(NgModelMaxValidator);
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = 11;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.max.errors).toEqual({max: {max: 10, actual: 11}});
+
+           input.value = 9;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.max.errors).toBeNull();
+
+           fixture.componentInstance.max = 5;
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.max.errors).toEqual({max: {max: 5, actual: 9}});
+         }));
+
+      it('should validate min', fakeAsync(() => {
+           const fixture = initTest(NgModelMinValidator);
+           fixture.componentInstance.min = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('min')).toEqual('10');
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = 11;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = 9;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min.errors).toEqual({min: {min: 10, actual: 9}});
+
+           fixture.componentInstance.min = 0;
+           fixture.detectChanges();
+           tick();
+           input.value = -5;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('min')).toEqual('0');
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min.errors).toEqual({min: {min: 0, actual: -5}});
+
+           input.value = 0;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+         }));
+
+      it('should validate min for float number', fakeAsync(() => {
+           const fixture = initTest(NgModelMinValidator);
+           fixture.componentInstance.min = 10.25;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('min')).toEqual('10.25');
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = 10.35;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = 10.25;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = 10.15;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min.errors).toEqual({min: {min: 10.25, actual: 10.15}});
+         }));
+      it('should apply min validation when control value is defined as a string', fakeAsync(() => {
+           const fixture = initTest(NgModelMinValidator);
+           fixture.componentInstance.min = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '11';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(input.getAttribute('min')).toEqual('10');
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = '9';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min.errors).toEqual({min: {min: 10, actual: 9}});
+         }));
+
+      it('should re-validate if min changes', fakeAsync(() => {
+           const fixture = initTest(NgModelMinValidator);
+           fixture.componentInstance.min = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = 11;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+
+           input.value = 9;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min.errors).toEqual({min: {min: 10, actual: 9}});
+
+           fixture.componentInstance.min = 9;
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min.errors).toBeNull();
+         }));
+
+      it('should not include the min and max validators when using another directive with the same properties',
+         fakeAsync(() => {
+           const fixture = initTest(NgModelNoMinMaxValidator);
+           const validateFnSpy = spyOn(MaxValidator.prototype, 'validate');
+
+           fixture.componentInstance.min = 10;
+           fixture.componentInstance.max = 20;
+           fixture.detectChanges();
+           tick();
+
+           const min = fixture.debugElement.query(By.directive(MinValidator));
+           expect(min).toBeNull();
+
+           const max = fixture.debugElement.query(By.directive(MaxValidator));
+           expect(max).toBeNull();
+
+           const cd = fixture.debugElement.query(By.directive(CustomDirective));
+           expect(cd).toBeDefined();
+
+           expect(validateFnSpy).not.toHaveBeenCalled();
+         }));
+
+      it('should not include the min and max validators when using a custom component with the same properties',
+         fakeAsync(() => {
+           @Directive({
+             selector: 'my-custom-component',
+             providers: [{
+               provide: NG_VALUE_ACCESSOR,
+               multi: true,
+               useExisting: forwardRef(() => MyCustomComponentDirective),
+             }]
+           })
+           class MyCustomComponentDirective implements ControlValueAccessor {
+             @Input() min!: number;
+             @Input() max!: number;
+
+             writeValue(obj: any): void {}
+             registerOnChange(fn: any): void {}
+             registerOnTouched(fn: any): void {}
+           }
+
+           @Component({
+             template: `
+              <!-- no min/max validators should be matched on these elements -->
+              <my-custom-component name="min" ngModel [min]="min"></my-custom-component>
+              <my-custom-component name="max" ngModel [max]="max"></my-custom-component>
+            `
+           })
+           class AppComponent {
+           }
+
+           const fixture = initTest(AppComponent, MyCustomComponentDirective);
+           const validateFnSpy = spyOn(MaxValidator.prototype, 'validate');
+
+           fixture.detectChanges();
+           tick();
+
+           const mv = fixture.debugElement.query(By.directive(MaxValidator));
+           expect(mv).toBeNull();
+
+           const cd = fixture.debugElement.query(By.directive(CustomDirective));
+           expect(cd).toBeDefined();
+
+           expect(validateFnSpy).not.toHaveBeenCalled();
+         }));
+
+      it('should not include the min and max validators for inputs with type range',
+         fakeAsync(() => {
+           @Component({template: '<input type="range" min="10" max="20">'})
+           class AppComponent {
+           }
+
+           const fixture = initTest(AppComponent);
+           const maxValidateFnSpy = spyOn(MaxValidator.prototype, 'validate');
+           const minValidateFnSpy = spyOn(MinValidator.prototype, 'validate');
+
+           fixture.detectChanges();
+           tick();
+
+           const maxValidator = fixture.debugElement.query(By.directive(MaxValidator));
+           expect(maxValidator).toBeNull();
+
+           const minValidator = fixture.debugElement.query(By.directive(MinValidator));
+           expect(minValidator).toBeNull();
+
+           expect(maxValidateFnSpy).not.toHaveBeenCalled();
+           expect(minValidateFnSpy).not.toHaveBeenCalled();
+         }));
+
+      ['number', 'string'].forEach((inputType: string) => {
+        it(`should validate min and max when constraints are represented using a ${inputType}`,
+           fakeAsync(() => {
+             const fixture = initTest(NgModelMinMaxValidator);
+
+             fixture.componentInstance.min = inputType === 'string' ? '5' : 5;
+             fixture.componentInstance.max = inputType === 'string' ? '10' : 10;
+
+             fixture.detectChanges();
+             tick();
+
+             const input = fixture.debugElement.query(By.css('input')).nativeElement;
+             const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+             input.value = '';
+             dispatchEvent(input, 'input');
+             fixture.detectChanges();
+             expect(form.valid).toEqual(true);
+             expect(form.controls.min_max.errors).toBeNull();
+
+             input.value = 11;
+             dispatchEvent(input, 'input');
+             fixture.detectChanges();
+             expect(form.valid).toEqual(false);
+             expect(form.controls.min_max.errors).toEqual({max: {max: 10, actual: 11}});
+
+             input.value = 4;
+             dispatchEvent(input, 'input');
+             fixture.detectChanges();
+             expect(form.valid).toEqual(false);
+             expect(form.controls.min_max.errors).toEqual({min: {min: 5, actual: 4}});
+
+             input.value = 9;
+             dispatchEvent(input, 'input');
+             fixture.detectChanges();
+             expect(form.valid).toEqual(true);
+             expect(form.controls.min_max.errors).toBeNull();
+           }));
+      });
+      it('should validate min and max', fakeAsync(() => {
+           const fixture = initTest(NgModelMinMaxValidator);
+           fixture.componentInstance.min = 5;
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+
+           input.value = 11;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min_max.errors).toEqual({max: {max: 10, actual: 11}});
+
+           input.value = 4;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min_max.errors).toEqual({min: {min: 5, actual: 4}});
+
+           input.value = 9;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+         }));
+
+      it('should apply min and max validation when control value is defined as a string',
+         fakeAsync(() => {
+           const fixture = initTest(NgModelMinMaxValidator);
+           fixture.componentInstance.min = 5;
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+
+           input.value = '11';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min_max.errors).toEqual({max: {max: 10, actual: 11}});
+
+           input.value = '4';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min_max.errors).toEqual({min: {min: 5, actual: 4}});
+
+           input.value = '9';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+         }));
+
+      it('should re-validate if min/max changes', fakeAsync(() => {
+           const fixture = initTest(NgModelMinMaxValidator);
+           fixture.componentInstance.min = 5;
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = 10;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+
+           input.value = 12;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min_max.errors).toEqual({max: {max: 10, actual: 12}});
+
+           fixture.componentInstance.max = 12;
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+
+           input.value = 5;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+
+           input.value = 0;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(false);
+           expect(form.controls.min_max.errors).toEqual({min: {min: 5, actual: 0}});
+
+           fixture.componentInstance.min = 0;
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+         }));
+
+      it('should run min/max validation for empty values ', fakeAsync(() => {
+           const fixture = initTest(NgModelMinMaxValidator);
+           fixture.componentInstance.min = 5;
+           fixture.componentInstance.max = 10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           const maxValidateFnSpy = spyOn(MaxValidator.prototype, 'validate');
+           const minValidateFnSpy = spyOn(MinValidator.prototype, 'validate');
+
+           input.value = '';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toEqual(true);
+           expect(form.controls.min_max.errors).toBeNull();
+
+           expect(maxValidateFnSpy).toHaveBeenCalled();
+           expect(minValidateFnSpy).toHaveBeenCalled();
+         }));
+
+      it('should run min/max validation for negative values', fakeAsync(() => {
+           const fixture = initTest(NgModelMinMaxValidator);
+           fixture.componentInstance.min = -20;
+           fixture.componentInstance.max = -10;
+           fixture.detectChanges();
+           tick();
+
+           const input = fixture.debugElement.query(By.css('input')).nativeElement;
+           const form = fixture.debugElement.children[0].injector.get(NgForm);
+
+           input.value = '-30';
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toBeFalse();
+           expect(form.controls.min_max.errors).toEqual({min: {min: -20, actual: -30}});
+
+           input.value = -15;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toBeTruthy();
+           expect(form.controls.min_max.errors).toBeNull();
+
+           input.value = -5;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toBeFalse();
+           expect(form.controls.min_max.errors).toEqual({max: {max: -10, actual: -5}});
+
+           input.value = 0;
+           dispatchEvent(input, 'input');
+           fixture.detectChanges();
+           expect(form.valid).toBeFalse();
+           expect(form.controls.min_max.errors).toEqual({max: {max: -10, actual: 0}});
+         }));
+
+      it('should call registerOnValidatorChange as a part of a formGroup setup', fakeAsync(() => {
+           let registerOnValidatorChangeFired = 0;
+           let registerOnAsyncValidatorChangeFired = 0;
+
+           @Directive({
+             selector: '[ng-noop-validator]',
+             providers: [
+               {provide: NG_VALIDATORS, useExisting: forwardRef(() => NoOpValidator), multi: true}
+             ]
+           })
+           class NoOpValidator implements Validator {
+             @Input() validatorInput = '';
+
+             validate(c: AbstractControl) {
+               return null;
+             }
+
+             public registerOnValidatorChange(fn: () => void) {
+               registerOnValidatorChangeFired++;
+             }
+           }
+
+           @Directive({
+             selector: '[ng-noop-async-validator]',
+             providers: [{
+               provide: NG_ASYNC_VALIDATORS,
+               useExisting: forwardRef(() => NoOpAsyncValidator),
+               multi: true
+             }]
+           })
+           class NoOpAsyncValidator implements AsyncValidator {
+             @Input() validatorInput = '';
+
+             validate(c: AbstractControl) {
+               return Promise.resolve(null);
+             }
+
+             public registerOnValidatorChange(fn: () => void) {
+               registerOnAsyncValidatorChangeFired++;
+             }
+           }
+
+           @Component({
+             selector: 'ng-model-noop-validation',
+             template: `
+              <form>
+                <div ngModelGroup="emptyGroup" ng-noop-validator ng-noop-async-validator [validatorInput]="validatorInput">
+                  <input name="fgInput" ngModel>
+                </div>
+              </form>
+            `
+           })
+           class NgModelNoOpValidation {
+             validatorInput = 'foo';
+             emptyGroup = {};
+           }
+
+           const fixture = initTest(NgModelNoOpValidation, NoOpValidator, NoOpAsyncValidator);
+           fixture.detectChanges();
+           tick();
+
+           expect(registerOnValidatorChangeFired).toBe(1);
+           expect(registerOnAsyncValidatorChangeFired).toBe(1);
+
+           fixture.componentInstance.validatorInput = 'bar';
+           fixture.detectChanges();
+
+           // Changing validator inputs should not cause `registerOnValidatorChange` to be invoked,
+           // since it's invoked just once during the setup phase.
+           expect(registerOnValidatorChangeFired).toBe(1);
+           expect(registerOnAsyncValidatorChangeFired).toBe(1);
+         }));
     });
 
     describe('IME events', () => {
@@ -1735,6 +2426,24 @@ class NgModelNgIfForm {
 }
 
 @Component({
+  selector: 'ng-model-nested',
+  template: `
+    <form>
+      <div ngModelGroup="contact-info">
+        <input name="first" [(ngModel)]="first">
+        <div ngModelGroup="other-names">
+          <input name="other-names" [(ngModel)]="other">
+        </div>
+      </div>
+    </form>
+  `
+})
+class NgModelNestedForm {
+  first!: string;
+  other!: string;
+}
+
+@Component({
   selector: 'ng-no-form',
   template: `
     <form ngNoForm>
@@ -1878,4 +2587,51 @@ class NgModelChangesForm {
 })
 class NgModelChangeState {
   onNgModelChange = () => {};
+}
+
+@Component({
+  selector: 'ng-model-max',
+  template: `<form><input name="max" type="number" ngModel [max]="max"></form>`
+})
+class NgModelMaxValidator {
+  max!: number;
+}
+
+@Component({
+  selector: 'ng-model-min',
+  template: `<form><input name="min" type="number" ngModel [min]="min"></form>`
+})
+class NgModelMinValidator {
+  min!: number;
+}
+
+@Component({
+  selector: 'ng-model-min-max',
+  template: `
+    <form><input name="min_max" type="number" ngModel [min]="min" [max]="max"></form>`
+})
+class NgModelMinMaxValidator {
+  min!: number|string;
+  max!: number|string;
+}
+
+@Directive({selector: '[myDir]'})
+class CustomDirective {
+  @Input() min!: number;
+  @Input() max!: number;
+}
+
+@Component({
+  selector: 'ng-model-no-min-max',
+  template: `
+    <form>
+      <input name="min" type="text" ngModel [min]="min" myDir>
+      <input name="max" type="text" ngModel [max]="max" myDir>
+    </form>
+  `,
+})
+class NgModelNoMinMaxValidator {
+  min!: number;
+  max!: number;
+  @ViewChild('myDir') myDir: any;
 }

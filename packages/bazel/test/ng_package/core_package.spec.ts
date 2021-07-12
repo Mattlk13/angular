@@ -6,14 +6,15 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {ivyEnabled, obsoleteInIvy} from '@angular/private/testing';
+import {obsoleteInIvy} from '@angular/private/testing';
+import {runfiles} from '@bazel/runfiles';
 import * as path from 'path';
 import * as shx from 'shelljs';
 
 // Resolve the "npm_package" directory by using the runfile resolution. Note that we need to
 // resolve the "package.json" of the package since otherwise NodeJS would resolve the "main"
 // file, which is not necessarily at the root of the "npm_package".
-shx.cd(path.dirname(require.resolve('angular/packages/core/npm_package/package.json')));
+shx.cd(path.dirname(runfiles.resolve('angular/packages/core/npm_package/package.json')));
 
 /**
  * Utility functions that allows me to create fs paths
@@ -58,29 +59,26 @@ describe('@angular/core ng_package', () => {
       });
 
       it('should contain metadata for ng update', () => {
+        interface PackageJson {
+          'ng-update': {packageGroup: string[];};
+        }
         expect(shx.cat(packageJson)).not.toContain('NG_UPDATE_PACKAGE_GROUP');
-        expect(JSON.parse(shx.cat(packageJson))['ng-update']['packageGroup'])
+        expect((JSON.parse(shx.cat(packageJson)) as PackageJson)['ng-update'].packageGroup)
             .toContain('@angular/core');
       });
     });
 
     describe('typescript support', () => {
-      if (ivyEnabled) {
-        it('should have an index d.ts file', () => {
-          expect(shx.cat('core.d.ts')).toContain(`export *`);
-        });
-
-        it('should not have amd module names', () => {
-          expect(shx.cat('public_api.d.ts')).not.toContain('<amd-module name');
-        });
-      } else {
-        it('should have an index d.ts file', () => {
-          expect(shx.cat('core.d.ts')).toContain('export declare');
-        });
-        it('should have an r3_symbols d.ts file', () => {
-          expect(shx.cat('src/r3_symbols.d.ts')).toContain('export declare');
-        });
-      }
+      it('should not have amd module names', () => {
+        expect(shx.cat('core.d.ts')).not.toContain('<amd-module name');
+      });
+      it('should have an index d.ts file', () => {
+        expect(shx.cat('core.d.ts')).toContain('export declare');
+      });
+      obsoleteInIvy('we no longer need to export r3_symbols')
+          .it('should have an r3_symbols d.ts file', () => {
+            expect(shx.cat('src/r3_symbols.d.ts')).toContain('export declare');
+          });
     });
 
     obsoleteInIvy('metadata files are no longer needed or produced in Ivy')
@@ -133,14 +131,6 @@ describe('@angular/core ng_package', () => {
         expect(shx.ls('bundles/core.umd.js.map').length).toBe(1, 'File not found');
       });
 
-      it('should have a minified umd file in the /bundles directory', () => {
-        expect(shx.ls('bundles/core.umd.min.js').length).toBe(1, 'File not found');
-      });
-
-      it('should have a source map next to the minified umd file', () => {
-        expect(shx.ls('bundles/core.umd.min.js.map').length).toBe(1, 'File not found');
-      });
-
       it('should have the version info in the header', () => {
         expect(shx.cat('bundles/core.umd.js'))
             .toMatch(/@license Angular v\d+\.\d+\.\d+(?!-PLACEHOLDER)/);
@@ -178,17 +168,10 @@ describe('@angular/core ng_package', () => {
     });
 
     describe('typings', () => {
-      if (ivyEnabled) {
-        const typingsFile = p`testing/index.d.ts`;
-        it('should have a typings file', () => {
-          expect(shx.cat(typingsFile)).toContain(`export * from './public_api';`);
-        });
-      } else {
-        const typingsFile = p`testing/testing.d.ts`;
-        it('should have a typings file', () => {
-          expect(shx.cat(typingsFile)).toContain('export declare');
-        });
-      }
+      const typingsFile = p`testing/testing.d.ts`;
+      it('should have a typings file', () => {
+        expect(shx.cat(typingsFile)).toContain('export declare');
+      });
 
       obsoleteInIvy(
           'now that we don\'t need metadata files, we don\'t need these redirects to help resolve paths to them')
@@ -229,14 +212,6 @@ describe('@angular/core ng_package', () => {
 
       it('should have a source map next to the umd file', () => {
         expect(shx.ls('bundles/core-testing.umd.js.map').length).toBe(1, 'File not found');
-      });
-
-      it('should have a minified umd file in the /bundles directory', () => {
-        expect(shx.ls('bundles/core-testing.umd.min.js').length).toBe(1, 'File not found');
-      });
-
-      it('should have a source map next to the minified umd file', () => {
-        expect(shx.ls('bundles/core-testing.umd.min.js.map').length).toBe(1, 'File not found');
       });
 
       it('should have an AMD name', () => {

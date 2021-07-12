@@ -8,7 +8,7 @@
 
 import * as ts from 'typescript';
 import {Decorator, ReflectionHost} from '../ngtsc/reflection';
-import {isAliasImportDeclaration, patchAliasReferenceResolutionOrDie} from './patch_alias_reference_resolution';
+import {isAliasImportDeclaration, loadIsReferencedAliasDeclarationPatch} from './patch_alias_reference_resolution';
 
 /**
  * Whether a given decorator should be treated as an Angular decorator.
@@ -140,10 +140,11 @@ function createCtorParametersClassPropertyType(): ts.TypeNode {
             undefined),
       ])),
       undefined));
-  return ts.createFunctionTypeNode(
-      undefined, [],
-      ts.createArrayTypeNode(
-          ts.createUnionTypeNode([ts.createTypeLiteralNode(typeElements), ts.createNull()])));
+
+  return ts.createFunctionTypeNode(undefined, [], ts.createArrayTypeNode(ts.createUnionTypeNode([
+    ts.createTypeLiteralNode(typeElements),
+    ts.createLiteralTypeNode(ts.createNull()),
+  ])));
 }
 
 /**
@@ -288,7 +289,9 @@ function typeReferenceToExpression(
       return entityNameToExpression(typeRef.typeName);
     case ts.SyntaxKind.UnionType:
       const childTypeNodes =
-          (node as ts.UnionTypeNode).types.filter(t => t.kind !== ts.SyntaxKind.NullKeyword);
+          (node as ts.UnionTypeNode)
+              .types.filter(
+                  t => !(ts.isLiteralTypeNode(t) && t.literal.kind === ts.SyntaxKind.NullKeyword));
       return childTypeNodes.length === 1 ?
           typeReferenceToExpression(entityNameToExpression, childTypeNodes[0]) :
           undefined;
@@ -298,15 +301,20 @@ function typeReferenceToExpression(
 }
 
 /**
- * Returns true if the given symbol refers to a value (as distinct from a type).
+ * Checks whether a given symbol refers to a value that exists at runtime (as distinct from a type).
  *
  * Expands aliases, which is important for the case where
  *   import * as x from 'some-module';
  * and x is now a value (the module object).
  */
-function symbolIsValue(tc: ts.TypeChecker, sym: ts.Symbol): boolean {
-  if (sym.flags & ts.SymbolFlags.Alias) sym = tc.getAliasedSymbol(sym);
-  return (sym.flags & ts.SymbolFlags.Value) !== 0;
+function symbolIsRuntimeValue(typeChecker: ts.TypeChecker, symbol: ts.Symbol): boolean {
+  if (symbol.flags & ts.SymbolFlags.Alias) {
+    symbol = typeChecker.getAliasedSymbol(symbol);
+  }
+
+  // Note that const enums are a special case, because
+  // while they have a value, they don't exist at runtime.
+  return (symbol.flags & ts.SymbolFlags.Value & ts.SymbolFlags.ConstEnumExcludes) !== 0;
 }
 
 /** ParameterDecorationInfo describes the information for a single constructor parameter. */
@@ -339,7 +347,12 @@ export function getDownlevelDecoratorsTransform(
     isCore: boolean, isClosureCompilerEnabled: boolean,
     skipClassDecorators: boolean): ts.TransformerFactory<ts.SourceFile> {
   return (context: ts.TransformationContext) => {
-    let referencedParameterTypes = new Set<ts.Declaration>();
+    // Ensure that referenced type symbols are not elided by TypeScript. Imports for
+    // such parameter type symbols previously could be type-only, but now might be also
+    // used in the `ctorParameters` static property as a value. We want to make sure
+    // that TypeScript does not elide imports for such type references. Read more
+    // about this in the description for `loadIsReferencedAliasDeclarationPatch`.
+    const referencedParameterTypes = loadIsReferencedAliasDeclarationPatch(context);
 
     /**
      * Converts an EntityName (from a type annotation) to an expression (accessing a value).
@@ -351,7 +364,7 @@ export function getDownlevelDecoratorsTransform(
       const symbol = typeChecker.getSymbolAtLocation(name);
       // Check if the entity name references a symbol that is an actual value. If it is not, it
       // cannot be referenced by an expression, so return undefined.
-      if (!symbol || !symbolIsValue(typeChecker, symbol) || !symbol.declarations ||
+      if (!symbol || !symbolIsRuntimeValue(typeChecker, symbol) || !symbol.declarations ||
           symbol.declarations.length === 0) {
         return undefined;
       }
@@ -429,7 +442,7 @@ export function getDownlevelDecoratorsTransform(
 
       const name = (element.name as ts.Identifier).text;
       const mutable = ts.getMutableClone(element);
-      mutable.decorators = decoratorsToKeep.length ?
+      (mutable as any).decorators = decoratorsToKeep.length ?
           ts.setTextRange(ts.createNodeArray(decoratorsToKeep), mutable.decorators) :
           undefined;
       return [name, mutable, toLower];
@@ -522,12 +535,17 @@ export function getDownlevelDecoratorsTransform(
         }
         newMembers.push(ts.visitEachChild(member, decoratorDownlevelVisitor, context));
       }
-      const decorators = host.getDecoratorsOfDeclaration(classDecl) || [];
+
+      // The `ReflectionHost.getDecoratorsOfDeclaration()` method will not return certain kinds of
+      // decorators that will never be Angular decorators. So we cannot rely on it to capture all
+      // the decorators that should be kept. Instead we start off with a set of the raw decorators
+      // on the class, and only remove the ones that have been identified for downleveling.
+      const decoratorsToKeep = new Set<ts.Decorator>(classDecl.decorators);
+      const possibleAngularDecorators = host.getDecoratorsOfDeclaration(classDecl) || [];
 
       let hasAngularDecorator = false;
       const decoratorsToLower = [];
-      const decoratorsToKeep: ts.Decorator[] = [];
-      for (const decorator of decorators) {
+      for (const decorator of possibleAngularDecorators) {
         // We only deal with concrete nodes in TypeScript sources, so we don't
         // need to handle synthetically created decorators.
         const decoratorNode = decorator.node! as ts.Decorator;
@@ -541,12 +559,9 @@ export function getDownlevelDecoratorsTransform(
 
         if (isNgDecorator && !skipClassDecorators) {
           decoratorsToLower.push(extractMetadataFromSingleDecorator(decoratorNode, diagnostics));
-        } else {
-          decoratorsToKeep.push(decoratorNode);
+          decoratorsToKeep.delete(decoratorNode);
         }
       }
-
-      const newClassDeclaration = ts.getMutableClone(classDecl);
 
       if (decoratorsToLower.length) {
         newMembers.push(createDecoratorClassProperty(decoratorsToLower));
@@ -562,12 +577,14 @@ export function getDownlevelDecoratorsTransform(
       if (decoratedProperties.size) {
         newMembers.push(createPropDecoratorsClassProperty(diagnostics, decoratedProperties));
       }
-      newClassDeclaration.members = ts.setTextRange(
-          ts.createNodeArray(newMembers, newClassDeclaration.members.hasTrailingComma),
-          classDecl.members);
-      newClassDeclaration.decorators =
-          decoratorsToKeep.length ? ts.createNodeArray(decoratorsToKeep) : undefined;
-      return newClassDeclaration;
+
+      const members = ts.setTextRange(
+          ts.createNodeArray(newMembers, classDecl.members.hasTrailingComma), classDecl.members);
+
+      return ts.updateClassDeclaration(
+          classDecl, decoratorsToKeep.size ? Array.from(decoratorsToKeep) : undefined,
+          classDecl.modifiers, classDecl.name, classDecl.typeParameters, classDecl.heritageClauses,
+          members);
     }
 
     /**
@@ -583,12 +600,6 @@ export function getDownlevelDecoratorsTransform(
     }
 
     return (sf: ts.SourceFile) => {
-      // Ensure that referenced type symbols are not elided by TypeScript. Imports for
-      // such parameter type symbols previously could be type-only, but now might be also
-      // used in the `ctorParameters` static property as a value. We want to make sure
-      // that TypeScript does not elide imports for such type references. Read more
-      // about this in the description for `patchAliasReferenceResolution`.
-      patchAliasReferenceResolutionOrDie(context, referencedParameterTypes);
       // Downlevel decorators and constructor parameter types. We will keep track of all
       // referenced constructor parameter types so that we can instruct TypeScript to
       // not elide their imports if they previously were only type-only.

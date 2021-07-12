@@ -9,7 +9,7 @@ import {createHash} from 'crypto';
 import {satisfies} from 'semver';
 import * as vm from 'vm';
 
-import {AbsoluteFsPath, dirname, FileSystem, join, resolve} from '../../../src/ngtsc/file_system';
+import {AbsoluteFsPath, PathManipulation, ReadonlyFileSystem} from '../../../src/ngtsc/file_system';
 
 import {PackageJsonFormatPropertiesMap} from './entry_point';
 
@@ -25,6 +25,12 @@ export interface NgccProjectConfig<T = RawNgccPackageConfig> {
    * Options that control how locking the process is handled.
    */
   locking?: ProcessLockingConfiguration;
+  /**
+   * Name of hash algorithm used to generate hashes of the configuration.
+   *
+   * Defaults to `sha256`.
+   */
+  hashAlgorithm?: string;
 }
 
 /**
@@ -186,13 +192,14 @@ export class ProcessedNgccPackageConfig implements Omit<RawNgccPackageConfig, 'e
    */
   ignorableDeepImportMatchers: RegExp[];
 
-  constructor(packagePath: AbsoluteFsPath, {
+  constructor(fs: PathManipulation, packagePath: AbsoluteFsPath, {
     entryPoints = {},
     ignorableDeepImportMatchers = [],
   }: RawNgccPackageConfig) {
     const absolutePathEntries: [AbsoluteFsPath, NgccEntryPointConfig][] =
-        Object.entries(entryPoints).map(([relativePath,
-                                          config]) => [resolve(packagePath, relativePath), config]);
+        Object.entries(entryPoints).map(([
+                                          relativePath, config
+                                        ]) => [fs.resolve(packagePath, relativePath), config]);
 
     this.packagePath = packagePath;
     this.entryPoints = new Map(absolutePathEntries);
@@ -229,10 +236,12 @@ export class NgccConfiguration {
   private projectConfig: PartiallyProcessedConfig;
   private cache = new Map<string, VersionedPackageConfig>();
   readonly hash: string;
+  readonly hashAlgorithm: string;
 
-  constructor(private fs: FileSystem, baseDir: AbsoluteFsPath) {
+  constructor(private fs: ReadonlyFileSystem, baseDir: AbsoluteFsPath) {
     this.defaultConfig = this.processProjectConfig(DEFAULT_NGCC_CONFIG);
     this.projectConfig = this.processProjectConfig(this.loadProjectConfig(baseDir));
+    this.hashAlgorithm = this.projectConfig.hashAlgorithm;
     this.hash = this.computeHash();
   }
 
@@ -261,7 +270,7 @@ export class NgccConfiguration {
   getPackageConfig(packageName: string, packagePath: AbsoluteFsPath, version: string|null):
       ProcessedNgccPackageConfig {
     const rawPackageConfig = this.getRawPackageConfig(packageName, packagePath, version);
-    return new ProcessedNgccPackageConfig(packagePath, rawPackageConfig);
+    return new ProcessedNgccPackageConfig(this.fs, packagePath, rawPackageConfig);
   }
 
   private getRawPackageConfig(
@@ -298,7 +307,8 @@ export class NgccConfiguration {
   }
 
   private processProjectConfig(projectConfig: NgccProjectConfig): PartiallyProcessedConfig {
-    const processedConfig: PartiallyProcessedConfig = {packages: {}, locking: {}};
+    const processedConfig:
+        PartiallyProcessedConfig = {packages: {}, locking: {}, hashAlgorithm: 'sha256'};
 
     // locking configuration
     if (projectConfig.locking !== undefined) {
@@ -316,11 +326,16 @@ export class NgccConfiguration {
       }
     }
 
+    // hash algorithm config
+    if (projectConfig.hashAlgorithm !== undefined) {
+      processedConfig.hashAlgorithm = projectConfig.hashAlgorithm;
+    }
+
     return processedConfig;
   }
 
   private loadProjectConfig(baseDir: AbsoluteFsPath): NgccProjectConfig {
-    const configFilePath = join(baseDir, NGCC_CONFIG_FILENAME);
+    const configFilePath = this.fs.join(baseDir, NGCC_CONFIG_FILENAME);
     if (this.fs.exists(configFilePath)) {
       try {
         return this.evalSrcFile(configFilePath);
@@ -334,7 +349,7 @@ export class NgccConfiguration {
 
   private loadPackageConfig(packagePath: AbsoluteFsPath, version: string|null):
       VersionedPackageConfig|null {
-    const configFilePath = join(packagePath, NGCC_CONFIG_FILENAME);
+    const configFilePath = this.fs.join(packagePath, NGCC_CONFIG_FILENAME);
     if (this.fs.exists(configFilePath)) {
       try {
         const packageConfig = this.evalSrcFile(configFilePath);
@@ -357,7 +372,7 @@ export class NgccConfiguration {
       module: {exports: theExports},
       exports: theExports,
       require,
-      __dirname: dirname(srcPath),
+      __dirname: this.fs.dirname(srcPath),
       __filename: srcPath
     };
     vm.runInNewContext(src, sandbox, {filename: srcPath});
@@ -377,7 +392,7 @@ export class NgccConfiguration {
   }
 
   private computeHash(): string {
-    return createHash('md5').update(JSON.stringify(this.projectConfig)).digest('hex');
+    return createHash(this.hashAlgorithm).update(JSON.stringify(this.projectConfig)).digest('hex');
   }
 }
 

@@ -15,7 +15,10 @@ import {ApplicationInitStatus} from './application_init';
 import {APP_BOOTSTRAP_LISTENER, PLATFORM_INITIALIZER} from './application_tokens';
 import {getCompilerFacade} from './compiler/compiler_facade';
 import {Console} from './console';
-import {Injectable, InjectionToken, Injector, StaticProvider} from './di';
+import {Injectable} from './di/injectable';
+import {InjectionToken} from './di/injection_token';
+import {Injector} from './di/injector';
+import {StaticProvider} from './di/interface/provider';
 import {INJECTOR_SCOPE} from './di/scope';
 import {ErrorHandler} from './error_handler';
 import {DEFAULT_LOCALE_ID} from './i18n/localization';
@@ -30,7 +33,7 @@ import {InternalViewRef, ViewRef} from './linker/view_ref';
 import {isComponentResourceResolutionQueueEmpty, resolveComponentResources} from './metadata/resource_loading';
 import {assertNgModuleType} from './render3/assert';
 import {ComponentFactory as R3ComponentFactory} from './render3/component_ref';
-import {setLocaleId} from './render3/i18n';
+import {setLocaleId} from './render3/i18n/i18n_locale_id';
 import {setJitOptions} from './render3/jit/jit_options';
 import {NgModuleFactory as R3NgModuleFactory} from './render3/ng_module_ref';
 import {publishDefaultGlobalUtils as _publishDefaultGlobalUtils} from './render3/util/global_utils';
@@ -154,7 +157,7 @@ export function createPlatform(injector: Injector): PlatformRef {
 
 /**
  * Creates a factory for a platform. Can be used to provide or override `Providers` specific to
- * your applciation's runtime needs, such as `PLATFORM_INITIALIZER` and `PLATFORM_ID`.
+ * your application's runtime needs, such as `PLATFORM_INITIALIZER` and `PLATFORM_ID`.
  * @param parentPlatformFactory Another platform factory to modify. Allows you to compose factories
  * to build up configurations that might be required by different libraries or parts of the
  * application.
@@ -260,9 +263,28 @@ export interface BootstrapOptions {
    * coalesced and the change detection will be triggered multiple times.
    * And if this option be set to true, the change detection will be
    * triggered async by scheduling a animation frame. So in the case above,
-   * the change detection will only be trigged once.
+   * the change detection will only be triggered once.
    */
   ngZoneEventCoalescing?: boolean;
+
+  /**
+   * Optionally specify if `NgZone#run()` method invocations should be coalesced
+   * into a single change detection.
+   *
+   * Consider the following case.
+   *
+   * for (let i = 0; i < 10; i ++) {
+   *   ngZone.run(() => {
+   *     // do something
+   *   });
+   * }
+   *
+   * This case triggers the change detection multiple times.
+   * With ngZoneRunCoalescing options, all change detections in an event loop trigger only once.
+   * In addition, the change detection executes in requestAnimation.
+   *
+   */
+  ngZoneRunCoalescing?: boolean;
 }
 
 /**
@@ -313,10 +335,13 @@ export class PlatformRef {
     // pass that as parent to the NgModuleFactory.
     const ngZoneOption = options ? options.ngZone : undefined;
     const ngZoneEventCoalescing = (options && options.ngZoneEventCoalescing) || false;
-    const ngZone = getNgZone(ngZoneOption, ngZoneEventCoalescing);
+    const ngZoneRunCoalescing = (options && options.ngZoneRunCoalescing) || false;
+    const ngZone = getNgZone(ngZoneOption, {ngZoneEventCoalescing, ngZoneRunCoalescing});
     const providers: StaticProvider[] = [{provide: NgZone, useValue: ngZone}];
-    // Attention: Don't use ApplicationRef.run here,
-    // as we want to be sure that all possible constructor calls are inside `ngZone.run`!
+    // Note: Create ngZoneInjector within ngZone.run so that all of the instantiated services are
+    // created within the Angular zone
+    // Do not try to replace ngZone.run with ApplicationRef#run because ApplicationRef would then be
+    // created outside of the Angular zone.
     return ngZone.run(() => {
       const ngZoneInjector = Injector.create(
           {providers: providers, parent: this.injector, name: moduleFactory.moduleType.name});
@@ -325,12 +350,17 @@ export class PlatformRef {
       if (!exceptionHandler) {
         throw new Error('No ErrorHandler. Is platform module (BrowserModule) included?');
       }
-      moduleRef.onDestroy(() => remove(this._modules, moduleRef));
-      ngZone!.runOutsideAngular(() => ngZone!.onError.subscribe({
-        next: (error: any) => {
-          exceptionHandler.handleError(error);
-        }
-      }));
+      ngZone!.runOutsideAngular(() => {
+        const subscription = ngZone!.onError.subscribe({
+          next: (error: any) => {
+            exceptionHandler.handleError(error);
+          }
+        });
+        moduleRef.onDestroy(() => {
+          remove(this._modules, moduleRef);
+          subscription.unsubscribe();
+        });
+      });
       return _callAndReportToErrorHandler(exceptionHandler, ngZone!, () => {
         const initStatus: ApplicationInitStatus = moduleRef.injector.get(ApplicationInitStatus);
         initStatus.runInitializers();
@@ -423,7 +453,8 @@ export class PlatformRef {
 }
 
 function getNgZone(
-    ngZoneOption: NgZone|'zone.js'|'noop'|undefined, ngZoneEventCoalescing: boolean): NgZone {
+    ngZoneOption: NgZone|'zone.js'|'noop'|undefined,
+    extra?: {ngZoneEventCoalescing: boolean, ngZoneRunCoalescing: boolean}): NgZone {
   let ngZone: NgZone;
 
   if (ngZoneOption === 'noop') {
@@ -431,7 +462,8 @@ function getNgZone(
   } else {
     ngZone = (ngZoneOption === 'zone.js' ? undefined : ngZoneOption) || new NgZone({
                enableLongStackTrace: isDevMode(),
-               shouldCoalesceEventChangeDetection: ngZoneEventCoalescing
+               shouldCoalesceEventChangeDetection: !!extra?.ngZoneEventCoalescing,
+               shouldCoalesceRunChangeDetection: !!extra?.ngZoneRunCoalescing
              });
   }
   return ngZone;
@@ -565,8 +597,8 @@ export class ApplicationRef {
   private _bootstrapListeners: ((compRef: ComponentRef<any>) => void)[] = [];
   private _views: InternalViewRef[] = [];
   private _runningTick: boolean = false;
-  private _enforceNoNewChanges: boolean = false;
   private _stable = true;
+  private _onMicrotaskEmptySubscription: Subscription;
 
   /**
    * Get a list of component types registered to this application.
@@ -589,13 +621,10 @@ export class ApplicationRef {
 
   /** @internal */
   constructor(
-      private _zone: NgZone, private _console: Console, private _injector: Injector,
-      private _exceptionHandler: ErrorHandler,
+      private _zone: NgZone, private _injector: Injector, private _exceptionHandler: ErrorHandler,
       private _componentFactoryResolver: ComponentFactoryResolver,
       private _initStatus: ApplicationInitStatus) {
-    this._enforceNoNewChanges = isDevMode();
-
-    this._zone.onMicrotaskEmpty.subscribe({
+    this._onMicrotaskEmptySubscription = this._zone.onMicrotaskEmpty.subscribe({
       next: () => {
         this._zone.run(() => {
           this.tick();
@@ -653,20 +682,41 @@ export class ApplicationRef {
   }
 
   /**
-   * Bootstrap a new component at the root level of the application.
+   * Bootstrap a component onto the element identified by its selector or, optionally, to a
+   * specified element.
    *
    * @usageNotes
    * ### Bootstrap process
    *
-   * When bootstrapping a new root component into an application, Angular mounts the
-   * specified application component onto DOM elements identified by the componentType's
-   * selector and kicks off automatic change detection to finish initializing the component.
+   * When bootstrapping a component, Angular mounts it onto a target DOM element
+   * and kicks off automatic change detection. The target DOM element can be
+   * provided using the `rootSelectorOrNode` argument.
    *
-   * Optionally, a component can be mounted onto a DOM element that does not match the
-   * componentType's selector.
+   * If the target DOM element is not provided, Angular tries to find one on a page
+   * using the `selector` of the component that is being bootstrapped
+   * (first matched element is used).
    *
    * ### Example
-   * {@example core/ts/platform/platform.ts region='longform'}
+   *
+   * Generally, we define the component to bootstrap in the `bootstrap` array of `NgModule`,
+   * but it requires us to know the component while writing the application code.
+   *
+   * Imagine a situation where we have to wait for an API call to decide about the component to
+   * bootstrap. We can use the `ngDoBootstrap` hook of the `NgModule` and call this method to
+   * dynamically bootstrap a component.
+   *
+   * {@example core/ts/platform/platform.ts region='componentSelector'}
+   *
+   * Optionally, a component can be mounted onto a DOM element that does not match the
+   * selector of the bootstrapped component.
+   *
+   * In the following example, we are providing a CSS selector to match the target element.
+   *
+   * {@example core/ts/platform/platform.ts region='cssSelector'}
+   *
+   * While in this example, we are providing reference to a DOM node.
+   *
+   * {@example core/ts/platform/platform.ts region='domNode'}
    */
   bootstrap<C>(componentOrFactory: ComponentFactory<C>|Type<C>, rootSelectorOrNode?: string|any):
       ComponentRef<C> {
@@ -688,19 +738,27 @@ export class ApplicationRef {
         isBoundToModule(componentFactory) ? undefined : this._injector.get(NgModuleRef);
     const selectorOrNode = rootSelectorOrNode || componentFactory.selector;
     const compRef = componentFactory.create(Injector.NULL, [], selectorOrNode, ngModule);
-
-    compRef.onDestroy(() => {
-      this._unloadComponent(compRef);
-    });
+    const nativeElement = compRef.location.nativeElement;
     const testability = compRef.injector.get(Testability, null);
-    if (testability) {
-      compRef.injector.get(TestabilityRegistry)
-          .registerApplication(compRef.location.nativeElement, testability);
+    const testabilityRegistry = testability && compRef.injector.get(TestabilityRegistry);
+    if (testability && testabilityRegistry) {
+      testabilityRegistry.registerApplication(nativeElement, testability);
     }
 
+    compRef.onDestroy(() => {
+      this.detachView(compRef.hostView);
+      remove(this.components, compRef);
+      if (testabilityRegistry) {
+        testabilityRegistry.unregisterApplication(nativeElement);
+      }
+    });
+
     this._loadComponent(compRef);
-    if (isDevMode()) {
-      this._console.log(
+    // Note that we have still left the `isDevMode()` condition in order to avoid
+    // creating a breaking change for projects that still use the View Engine.
+    if ((typeof ngDevMode === 'undefined' || ngDevMode) && isDevMode()) {
+      const _console = this._injector.get(Console);
+      _console.log(
           `Angular is running in development mode. Call enableProdMode() to enable production mode.`);
     }
     return compRef;
@@ -726,7 +784,9 @@ export class ApplicationRef {
       for (let view of this._views) {
         view.detectChanges();
       }
-      if (this._enforceNoNewChanges) {
+      // Note that we have still left the `isDevMode()` condition in order to avoid
+      // creating a breaking change for projects that still use the View Engine.
+      if ((typeof ngDevMode === 'undefined' || ngDevMode) && isDevMode()) {
         for (let view of this._views) {
           view.checkNoChanges();
         }
@@ -769,15 +829,10 @@ export class ApplicationRef {
     listeners.forEach((listener) => listener(componentRef));
   }
 
-  private _unloadComponent(componentRef: ComponentRef<any>): void {
-    this.detachView(componentRef.hostView);
-    remove(this.components, componentRef);
-  }
-
   /** @internal */
   ngOnDestroy() {
-    // TODO(alxhub): Dispose of the NgZone.
     this._views.slice().forEach((view) => view.destroy());
+    this._onMicrotaskEmptySubscription.unsubscribe();
   }
 
   /**

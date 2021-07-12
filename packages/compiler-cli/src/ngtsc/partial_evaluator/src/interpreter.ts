@@ -11,7 +11,7 @@ import * as ts from 'typescript';
 import {Reference} from '../../imports';
 import {OwningModule} from '../../imports/src/references';
 import {DependencyTracker} from '../../incremental/api';
-import {ConcreteDeclaration, Declaration, EnumMember, FunctionDefinition, InlineDeclaration, ReflectionHost, SpecialDeclarationKind} from '../../reflection';
+import {Declaration, DeclarationKind, DeclarationNode, EnumMember, FunctionDefinition, isConcreteDeclaration, ReflectionHost, SpecialDeclarationKind} from '../../reflection';
 import {isDeclaration} from '../../util/src/typescript';
 
 import {ArrayConcatBuiltinFn, ArraySliceBuiltinFn} from './builtin';
@@ -220,6 +220,15 @@ export class StaticInterpreter {
       if (node.originalKeywordKind === ts.SyntaxKind.UndefinedKeyword) {
         return undefined;
       } else {
+        // Check if the symbol here is imported.
+        if (this.dependencyTracker !== null && this.host.getImportOfIdentifier(node) !== null) {
+          // It was, but no declaration for the node could be found. This means that the dependency
+          // graph for the current file cannot be properly updated to account for this (broken)
+          // import. Instead, the originating file is reported as failing dependency analysis,
+          // ensuring that future compilations will always attempt to re-resolve the previously
+          // broken identifier.
+          this.dependencyTracker.recordDependencyAnalysisFailure(context.originatingFile);
+        }
         return DynamicValue.fromUnknownIdentifier(node);
       }
     }
@@ -231,12 +240,7 @@ export class StaticInterpreter {
       return this.getResolvedEnum(decl.node, decl.identity.enumMembers, context);
     }
     const declContext = {...context, ...joinModuleContext(context, node, decl)};
-    // The identifier's declaration is either concrete (a ts.Declaration exists for it) or inline
-    // (a direct reference to a ts.Expression).
-    // TODO(alxhub): remove cast once TS is upgraded in g3.
-    const result = decl.node !== null ?
-        this.visitDeclaration(decl.node, declContext) :
-        this.visitExpression((decl as InlineDeclaration).expression, declContext);
+    const result = this.visitAmbiguousDeclaration(decl, declContext);
     if (result instanceof Reference) {
       // Only record identifiers to non-synthetic references. Synthetic references may not have the
       // same value at runtime as they do at compile time, so it's not legal to refer to them by the
@@ -250,7 +254,7 @@ export class StaticInterpreter {
     return result;
   }
 
-  private visitDeclaration(node: ts.Declaration, context: Context): ResolvedValue {
+  private visitDeclaration(node: DeclarationNode, context: Context): ResolvedValue {
     if (this.dependencyTracker !== null) {
       this.dependencyTracker.addDependency(context.originatingFile, node.getSourceFile());
     }
@@ -272,12 +276,28 @@ export class StaticInterpreter {
       return this.getReference(node, context);
     }
   }
-
   private visitVariableDeclaration(node: ts.VariableDeclaration, context: Context): ResolvedValue {
     const value = this.host.getVariableValue(node);
     if (value !== null) {
       return this.visitExpression(value, context);
     } else if (isVariableDeclarationDeclared(node)) {
+      // If the declaration has a literal type that can be statically reduced to a value, resolve to
+      // that value. If not, the historical behavior for variable declarations is to return a
+      // `Reference` to the variable, as the consumer could use it in a context where knowing its
+      // static value is not necessary.
+      //
+      // Arguably, since the value cannot be statically determined, we should return a
+      // `DynamicValue`. This returns a `Reference` because it's the same behavior as before
+      // `visitType` was introduced.
+      //
+      // TODO(zarend): investigate switching to a `DynamicValue` and verify this won't break any
+      // use cases, especially in ngcc
+      if (node.type !== undefined) {
+        const evaluatedType = this.visitType(node.type, context);
+        if (!(evaluatedType instanceof DynamicValue)) {
+          return evaluatedType;
+        }
+      }
       return this.getReference(node, context);
     } else {
       return undefined;
@@ -342,11 +362,18 @@ export class StaticInterpreter {
       };
 
       // Visit both concrete and inline declarations.
-      // TODO(alxhub): remove cast once TS is upgraded in g3.
-      return decl.node !== null ?
-          this.visitDeclaration(decl.node, declContext) :
-          this.visitExpression((decl as InlineDeclaration).expression, declContext);
+      return this.visitAmbiguousDeclaration(decl, declContext);
     });
+  }
+
+  private visitAmbiguousDeclaration(decl: Declaration, declContext: Context) {
+    return decl.kind === DeclarationKind.Inline && decl.implementation !== undefined &&
+            !isDeclaration(decl.implementation) ?
+        // Inline declarations whose `implementation` is a `ts.Expression` should be visited as
+        // an expression.
+        this.visitExpression(decl.implementation, declContext) :
+        // Otherwise just visit the `node` as a declaration.
+        this.visitDeclaration(decl.node, declContext);
   }
 
   private accessHelper(node: ts.Node, lhs: ResolvedValue, rhs: string|number, context: Context):
@@ -490,8 +517,10 @@ export class StaticInterpreter {
 
   private visitFunctionBody(node: ts.CallExpression, fn: FunctionDefinition, context: Context):
       ResolvedValue {
-    if (fn.body === null || fn.body.length !== 1 || !ts.isReturnStatement(fn.body[0])) {
+    if (fn.body === null) {
       return DynamicValue.fromUnknown(node);
+    } else if (fn.body.length !== 1 || !ts.isReturnStatement(fn.body[0])) {
+      return DynamicValue.fromComplexFunctionCall(node, fn);
     }
     const ret = fn.body[0] as ts.ReturnStatement;
 
@@ -665,8 +694,30 @@ export class StaticInterpreter {
     return map;
   }
 
-  private getReference<T extends ts.Declaration>(node: T, context: Context): Reference<T> {
+  private getReference<T extends DeclarationNode>(node: T, context: Context): Reference<T> {
     return new Reference(node, owningModule(context));
+  }
+
+  private visitType(node: ts.TypeNode, context: Context): ResolvedValue {
+    if (ts.isLiteralTypeNode(node)) {
+      return this.visitExpression(node.literal, context);
+    } else if (ts.isTupleTypeNode(node)) {
+      return this.visitTupleType(node, context);
+    } else if (ts.isNamedTupleMember(node)) {
+      return this.visitType(node.type, context);
+    }
+
+    return DynamicValue.fromDynamicType(node);
+  }
+
+  private visitTupleType(node: ts.TupleTypeNode, context: Context): ResolvedValueArray {
+    const res: ResolvedValueArray = [];
+
+    for (const elem of node.elements) {
+      res.push(this.visitType(elem, context));
+    }
+
+    return res;
   }
 }
 
@@ -730,12 +781,4 @@ function owningModule(context: Context, override: OwningModule|null = null): Own
   } else {
     return null;
   }
-}
-
-/**
- * Helper type guard to workaround a narrowing limitation in g3, where testing for
- * `decl.node !== null` would not narrow `decl` to be of type `ConcreteDeclaration`.
- */
-function isConcreteDeclaration(decl: Declaration): decl is ConcreteDeclaration {
-  return decl.node !== null;
 }

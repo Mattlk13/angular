@@ -74,7 +74,7 @@ setPublicVar COMPONENTS_REPO_TMP_DIR "/tmp/angular-components-repo"
 setPublicVar COMPONENTS_REPO_URL "https://github.com/angular/components.git"
 setPublicVar COMPONENTS_REPO_BRANCH "master"
 # **NOTE**: When updating the commit SHA, also update the cache key in the CircleCI `config.yml`.
-setPublicVar COMPONENTS_REPO_COMMIT "189d98e8b01b33974328255f085de04251d61567"
+setPublicVar COMPONENTS_REPO_COMMIT "7cc42f5d835b7971e9ff73e220b801cf7834d515"
 
 
 ####################################################################################################
@@ -107,7 +107,7 @@ echo "export CI_SECRET_PAYLOAD_FIREBASE_TOKEN=\"${CI_SECRET_PAYLOAD_FIREBASE_TOK
 ####################################################################################################
 ####################################################################################################
 ##                  Source `$BASH_ENV` to make the variables available immediately.               ##
-##                  ***NOTE: This must remain the the last action in this script***               ##
+##                  ***NOTE: This must remain the last action in this script***               ##
 ####################################################################################################
 ####################################################################################################
 source $BASH_ENV;

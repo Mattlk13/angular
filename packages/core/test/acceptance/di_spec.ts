@@ -7,10 +7,11 @@
  */
 
 import {CommonModule} from '@angular/common';
-import {Attribute, ChangeDetectorRef, Component, ComponentFactoryResolver, ComponentRef, Directive, ElementRef, EventEmitter, forwardRef, Host, HostBinding, Inject, Injectable, InjectionToken, INJECTOR, Injector, Input, LOCALE_ID, ModuleWithProviders, NgModule, NgZone, Optional, Output, Pipe, PipeTransform, Self, SkipSelf, TemplateRef, ViewChild, ViewContainerRef, ɵDEFAULT_LOCALE_ID as DEFAULT_LOCALE_ID} from '@angular/core';
+import {Attribute, ChangeDetectorRef, Component, ComponentFactoryResolver, ComponentRef, ContentChild, Directive, ElementRef, EventEmitter, forwardRef, Host, HostBinding, Inject, Injectable, InjectionToken, INJECTOR, Injector, Input, LOCALE_ID, NgModule, NgZone, Optional, Output, Pipe, PipeTransform, Self, SkipSelf, TemplateRef, ViewChild, ViewContainerRef, ViewRef, ɵDEFAULT_LOCALE_ID as DEFAULT_LOCALE_ID} from '@angular/core';
 import {ɵINJECTOR_SCOPE} from '@angular/core/src/core';
-import {ViewRef} from '@angular/core/src/render3/view_ref';
+import {ViewRef as ViewRefInternal} from '@angular/core/src/render3/view_ref';
 import {TestBed} from '@angular/core/testing';
+import {By} from '@angular/platform-browser';
 import {ivyEnabled, onlyInIvy} from '@angular/private/testing';
 import {BehaviorSubject} from 'rxjs';
 
@@ -615,7 +616,9 @@ describe('di', () => {
           }
 
           TestBed.configureTestingModule({declarations: [DirectiveA, DirectiveB, MyComp]});
-          expect(() => TestBed.createComponent(MyComp)).toThrowError(/Circular dep for/);
+          expect(() => TestBed.createComponent(MyComp))
+              .toThrowError(
+                  'NG0200: Circular dependency in DI detected for DirectiveA. Find more at https://angular.io/errors/NG0200');
         });
 
     onlyInIvy('Ivy has different error message for circular dependency')
@@ -630,7 +633,9 @@ describe('di', () => {
           }
 
           TestBed.configureTestingModule({declarations: [DirectiveA, DirectiveB, MyComp]});
-          expect(() => TestBed.createComponent(MyComp)).toThrowError(/Circular dep for/);
+          expect(() => TestBed.createComponent(MyComp))
+              .toThrowError(
+                  'NG0200: Circular dependency in DI detected for DirectiveA. Find more at https://angular.io/errors/NG0200');
         });
 
     describe('flags', () => {
@@ -698,30 +703,6 @@ describe('di', () => {
         });
       });
 
-      it('should skip the current node with @SkipSelf', () => {
-        @Directive({selector: '[dirA]'})
-        class DirectiveA {
-          constructor(@SkipSelf() public dirB: DirectiveB) {}
-        }
-
-        @Component({selector: 'my-comp', template: '<div dirA dirB="self"></div>'})
-        class MyComp {
-          @ViewChild(DirectiveA) dirA!: DirectiveA;
-        }
-
-        @Component({template: '<my-comp dirB="parent"></my-comp>'})
-        class MyApp {
-          @ViewChild(MyComp) myComp!: MyComp;
-        }
-
-        TestBed.configureTestingModule({declarations: [DirectiveA, DirectiveB, MyComp, MyApp]});
-        const fixture = TestBed.createComponent(MyApp);
-        fixture.detectChanges();
-
-        const dirA = fixture.componentInstance.myComp.dirA;
-        expect(dirA.dirB.value).toEqual('parent');
-      });
-
       onlyInIvy('Ivy has different error message when dependency is not found')
           .it('should check only the current node with @Self', () => {
             @Directive({selector: '[dirA]'})
@@ -734,8 +715,996 @@ describe('di', () => {
             }
             TestBed.configureTestingModule({declarations: [DirectiveA, DirectiveB, MyComp]});
             expect(() => TestBed.createComponent(MyComp))
-                .toThrowError(/NodeInjector: NOT_FOUND \[DirectiveB]/);
+                .toThrowError(/NG0201: No provider for DirectiveB found in NodeInjector/);
           });
+
+      describe('SkipSelf', () => {
+        describe('Injectors', () => {
+          it('should support @SkipSelf when injecting Injectors', () => {
+            @Component({
+              selector: 'parent',
+              template: '<child></child>',
+              providers: [{
+                provide: 'token',
+                useValue: 'PARENT',
+              }]
+            })
+            class ParentComponent {
+            }
+
+            @Component({
+              selector: 'child',
+              template: '...',
+              providers: [{
+                provide: 'token',
+                useValue: 'CHILD',
+              }]
+            })
+            class ChildComponent {
+              constructor(public injector: Injector, @SkipSelf() public parentInjector: Injector) {}
+            }
+
+            TestBed.configureTestingModule({
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            const childComponent =
+                fixture.debugElement.query(By.directive(ChildComponent)).componentInstance;
+            expect(childComponent.injector.get('token')).toBe('CHILD');
+            expect(childComponent.parentInjector.get('token')).toBe('PARENT');
+          });
+
+          it('should lookup module injector in case @SkipSelf is used and no suitable Injector found in element injector tree',
+             () => {
+               let componentInjector: Injector;
+               let moduleInjector: Injector;
+               @Component({
+                 selector: 'child',
+                 template: '...',
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'CHILD',
+                 }]
+               })
+               class MyComponent {
+                 constructor(@SkipSelf() public injector: Injector) {
+                   componentInjector = injector;
+                 }
+               }
+
+               @NgModule({
+                 declarations: [MyComponent],
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'NG_MODULE',
+                 }]
+               })
+               class MyModule {
+                 constructor(public injector: Injector) {
+                   moduleInjector = injector;
+                 }
+               }
+
+               TestBed.configureTestingModule({
+                 imports: [MyModule],
+               });
+               const fixture = TestBed.createComponent(MyComponent);
+               fixture.detectChanges();
+
+               expect(componentInjector!.get('token')).toBe('NG_MODULE');
+               expect(moduleInjector!.get('token')).toBe('NG_MODULE');
+             });
+
+          it('should respect @Host in case @SkipSelf is used and no suitable Injector found in element injector tree',
+             () => {
+               let componentInjector: Injector;
+               let moduleInjector: Injector;
+               @Component({
+                 selector: 'child',
+                 template: '...',
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'CHILD',
+                 }]
+               })
+               class MyComponent {
+                 constructor(@Host() @SkipSelf() public injector: Injector) {
+                   componentInjector = injector;
+                 }
+               }
+
+               @NgModule({
+                 declarations: [MyComponent],
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'NG_MODULE',
+                 }]
+               })
+               class MyModule {
+                 constructor(public injector: Injector) {
+                   moduleInjector = injector;
+                 }
+               }
+
+               TestBed.configureTestingModule({
+                 imports: [MyModule],
+               });
+
+               // If a token is injected with the @Host flag, the module injector is not searched
+               // for that token in Ivy.
+               if (ivyEnabled) {
+                 expect(() => TestBed.createComponent(MyComponent))
+                     .toThrowError(/NG0201: No provider for Injector found in NodeInjector/);
+               } else {
+                 const fixture = TestBed.createComponent(MyComponent);
+                 fixture.detectChanges();
+
+                 expect(componentInjector!.get('token')).toBe('NG_MODULE');
+                 expect(moduleInjector!.get('token')).toBe('NG_MODULE');
+               }
+             });
+
+          it('should throw when injecting Injectors using @SkipSelf and @Host and no Injectors are available in a current view',
+             () => {
+               @Component({
+                 selector: 'parent',
+                 template: '<child></child>',
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'PARENT',
+                 }]
+               })
+               class ParentComponent {
+               }
+
+               @Component({
+                 selector: 'child',
+                 template: '...',
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'CHILD',
+                 }]
+               })
+               class ChildComponent {
+                 constructor(@Host() @SkipSelf() public injector: Injector) {}
+               }
+
+               TestBed.configureTestingModule({
+                 declarations: [ParentComponent, ChildComponent],
+               });
+
+               // Ivy has different error message when dependency is not found
+               const expectedErrorMessage = ivyEnabled ?
+                   /NG0201: No provider for Injector found in NodeInjector/ :
+                   /No provider for Injector/;
+               expect(() => TestBed.createComponent(ParentComponent))
+                   .toThrowError(expectedErrorMessage);
+             });
+
+          it('should not throw when injecting Injectors using @SkipSelf, @Host, and @Optional and no Injectors are available in a current view',
+             () => {
+               @Component({
+                 selector: 'parent',
+                 template: '<child></child>',
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'PARENT',
+                 }]
+               })
+               class ParentComponent {
+               }
+
+               @Component({
+                 selector: 'child',
+                 template: '...',
+                 providers: [{
+                   provide: 'token',
+                   useValue: 'CHILD',
+                 }]
+               })
+               class ChildComponent {
+                 constructor(@Host() @SkipSelf() @Optional() public injector: Injector) {}
+               }
+
+               TestBed.configureTestingModule({
+                 declarations: [ParentComponent, ChildComponent],
+               });
+
+               // Ivy has different error message when dependency is not found
+               const expectedErrorMessage = ivyEnabled ?
+                   /NG0201: No provider for Injector found in NodeInjector/ :
+                   /No provider for Injector/;
+               expect(() => TestBed.createComponent(ParentComponent))
+                   .not.toThrowError(expectedErrorMessage);
+             });
+        });
+
+        describe('ElementRef', () => {
+          // While tokens like `ElementRef` make sense only in a context of a NodeInjector,
+          // ViewEngine also used `ModuleInjector` tree to lookup such tokens. In Ivy we replicate
+          // this behavior for now to avoid breaking changes.
+          it('should lookup module injector in case @SkipSelf is used for `ElementRef` token and Component has no parent',
+             () => {
+               let componentElement: ElementRef;
+               let moduleElement: ElementRef;
+               @Component({template: '<div>component</div>'})
+               class MyComponent {
+                 constructor(@SkipSelf() public el: ElementRef) {
+                   componentElement = el;
+                 }
+               }
+
+               @NgModule({
+                 declarations: [MyComponent],
+                 providers: [{
+                   provide: ElementRef,
+                   useValue: {from: 'NG_MODULE'},
+                 }]
+               })
+               class MyModule {
+                 constructor(public el: ElementRef) {
+                   moduleElement = el;
+                 }
+               }
+
+               TestBed.configureTestingModule({
+                 imports: [MyModule],
+               });
+               const fixture = TestBed.createComponent(MyComponent);
+               fixture.detectChanges();
+
+               expect((moduleElement! as any).from).toBe('NG_MODULE');
+               expect((componentElement! as any).from).toBe('NG_MODULE');
+             });
+
+          it('should return host node when @SkipSelf is used for `ElementRef` token and Component has no parent node',
+             () => {
+               let parentElement: ElementRef;
+               let componentElement: ElementRef;
+               @Component({selector: 'child', template: '...'})
+               class MyComponent {
+                 constructor(@SkipSelf() public el: ElementRef) {
+                   componentElement = el;
+                 }
+               }
+
+               @Component({
+                 template: '<child></child>',
+               })
+               class ParentComponent {
+                 constructor(public el: ElementRef) {
+                   parentElement = el;
+                 }
+               }
+
+               TestBed.configureTestingModule({
+                 imports: [CommonModule],
+                 declarations: [ParentComponent, MyComponent],
+               });
+               const fixture = TestBed.createComponent(ParentComponent);
+               fixture.detectChanges();
+
+               expect(componentElement!).toEqual(parentElement!);
+             });
+
+          it('should @SkipSelf on child directive node when injecting ElementRef on nested parent directive',
+             () => {
+               let parentRef: ElementRef;
+               let childRef: ElementRef;
+
+               @Directive({selector: '[parent]'})
+               class ParentDirective {
+                 constructor(elementRef: ElementRef) {
+                   parentRef = elementRef;
+                 }
+               }
+
+               @Directive({selector: '[child]'})
+               class ChildDirective {
+                 constructor(@SkipSelf() elementRef: ElementRef) {
+                   childRef = elementRef;
+                 }
+               }
+
+               @Component({template: '<div parent>parent <span child>child</span></div>'})
+               class MyComp {
+               }
+
+               TestBed.configureTestingModule(
+                   {declarations: [ParentDirective, ChildDirective, MyComp]});
+               const fixture = TestBed.createComponent(MyComp);
+               fixture.detectChanges();
+
+               // Assert against the `nativeElement` since Ivy always returns a new ElementRef.
+               expect(childRef!.nativeElement).toBe(parentRef!.nativeElement);
+               expect(childRef!.nativeElement.tagName).toBe('DIV');
+             });
+        });
+
+        describe('@SkipSelf when parent contains embedded views', () => {
+          it('should work for `ElementRef` token', () => {
+            let requestedElementRef: ElementRef;
+            @Component({
+              selector: 'child',
+              template: '...',
+            })
+            class ChildComponent {
+              constructor(@SkipSelf() public elementRef: ElementRef) {
+                requestedElementRef = elementRef;
+              }
+            }
+            @Component({
+              selector: 'root',
+              template: '<div><child *ngIf="true"></child></div>',
+            })
+            class ParentComponent {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            expect(requestedElementRef!.nativeElement).toEqual(fixture.nativeElement.firstChild);
+            expect(requestedElementRef!.nativeElement.tagName).toEqual('DIV');
+          });
+
+          it('should work for `ElementRef` token with expanded *ngIf', () => {
+            let requestedElementRef: ElementRef;
+            @Component({
+              selector: 'child',
+              template: '...',
+            })
+            class ChildComponent {
+              constructor(@SkipSelf() public elementRef: ElementRef) {
+                requestedElementRef = elementRef;
+              }
+            }
+            @Component({
+              selector: 'root',
+              template: '<div><ng-template [ngIf]="true"><child></child></ng-template></div>',
+            })
+            class ParentComponent {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            expect(requestedElementRef!.nativeElement).toEqual(fixture.nativeElement.firstChild);
+            expect(requestedElementRef!.nativeElement.tagName).toEqual('DIV');
+          });
+
+          it('should work for `ViewContainerRef` token', () => {
+            let requestedRef: ViewContainerRef;
+            @Component({
+              selector: 'child',
+              template: '...',
+            })
+            class ChildComponent {
+              constructor(@SkipSelf() public ref: ViewContainerRef) {
+                requestedRef = ref;
+              }
+            }
+
+            @Component({
+              selector: 'root',
+              template: '<div><child *ngIf="true"></child></div>',
+            })
+            class ParentComponent {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            if (ivyEnabled) {
+              expect(requestedRef!.element.nativeElement).toBe(fixture.nativeElement.firstChild);
+              expect(requestedRef!.element.nativeElement.tagName).toBe('DIV');
+            } else {
+              expect(requestedRef!).toBeNull();
+            }
+          });
+
+          it('should work for `ChangeDetectorRef` token', () => {
+            let requestedChangeDetectorRef: ChangeDetectorRef;
+            @Component({
+              selector: 'child',
+              template: '...',
+            })
+            class ChildComponent {
+              constructor(@SkipSelf() public changeDetectorRef: ChangeDetectorRef) {
+                requestedChangeDetectorRef = changeDetectorRef;
+              }
+            }
+
+            @Component({
+              selector: 'root',
+              template: '<child *ngIf="true"></child>',
+            })
+            class ParentComponent {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            const {context} = requestedChangeDetectorRef! as ViewRefInternal<ParentComponent>;
+            expect(context).toBe(fixture.componentInstance);
+          });
+
+          // this works consistently between VE and Ivy
+          it('should work for Injectors', () => {
+            let childComponentInjector: Injector;
+            let parentComponentInjector: Injector;
+            @Component({
+              selector: 'parent',
+              template: '<child *ngIf="true"></child>',
+              providers: [{
+                provide: 'token',
+                useValue: 'PARENT',
+              }]
+            })
+            class ParentComponent {
+              constructor(public injector: Injector) {
+                parentComponentInjector = injector;
+              }
+            }
+
+            @Component({
+              selector: 'child',
+              template: '...',
+              providers: [{
+                provide: 'token',
+                useValue: 'CHILD',
+              }]
+            })
+            class ChildComponent {
+              constructor(@SkipSelf() public injector: Injector) {
+                childComponentInjector = injector;
+              }
+            }
+
+            TestBed.configureTestingModule({
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            expect(childComponentInjector!.get('token'))
+                .toBe(parentComponentInjector!.get('token'));
+          });
+
+          it('should work for Injectors with expanded *ngIf', () => {
+            let childComponentInjector: Injector;
+            let parentComponentInjector: Injector;
+            @Component({
+              selector: 'parent',
+              template: '<ng-template [ngIf]="true"><child></child></ng-template>',
+              providers: [{
+                provide: 'token',
+                useValue: 'PARENT',
+              }]
+            })
+            class ParentComponent {
+              constructor(public injector: Injector) {
+                parentComponentInjector = injector;
+              }
+            }
+
+            @Component({
+              selector: 'child',
+              template: '...',
+              providers: [{
+                provide: 'token',
+                useValue: 'CHILD',
+              }]
+            })
+            class ChildComponent {
+              constructor(@SkipSelf() public injector: Injector) {
+                childComponentInjector = injector;
+              }
+            }
+
+            TestBed.configureTestingModule({
+              declarations: [ParentComponent, ChildComponent],
+            });
+            const fixture = TestBed.createComponent(ParentComponent);
+            fixture.detectChanges();
+
+            expect(childComponentInjector!.get('token'))
+                .toBe(parentComponentInjector!.get('token'));
+          });
+        });
+
+        describe('TemplateRef', () => {
+          // SkipSelf doesn't make sense to use with TemplateRef since you
+          // can't inject TemplateRef on a regular element and you can initialize
+          // a child component on a nested `<ng-template>` only when a component/directive
+          // on a parent `<ng-template>` is initialized.
+          it('should throw when using @SkipSelf for TemplateRef', () => {
+            @Directive({selector: '[dir]', exportAs: 'dir'})
+            class MyDir {
+              constructor(@SkipSelf() public templateRef: TemplateRef<any>) {}
+            }
+
+            @Component({selector: '[child]', template: '<ng-template dir></ng-template>'})
+            class ChildComp {
+              constructor(public templateRef: TemplateRef<any>) {}
+              @ViewChild(MyDir) directive!: MyDir;
+            }
+
+            @Component({
+              selector: 'root',
+              template: '<div child></div>',
+            })
+            class MyComp {
+              @ViewChild(ChildComp) child!: ChildComp;
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [MyDir, ChildComp, MyComp],
+            });
+            // Ivy has different error message when dependency is not found
+            const expectedErrorMessage = ivyEnabled ? /NG0201: No provider for TemplateRef found/ :
+                                                      /No provider for TemplateRef/;
+            expect(() => {
+              const fixture = TestBed.createComponent(MyComp);
+              fixture.detectChanges();
+            }).toThrowError(expectedErrorMessage);
+          });
+
+          it('should throw when SkipSelf and no parent TemplateRef', () => {
+            @Directive({selector: '[dirA]', exportAs: 'dirA'})
+            class DirA {
+              constructor(@SkipSelf() public templateRef: TemplateRef<any>) {}
+            }
+
+            @Component({
+              selector: 'root',
+              template: '<ng-template dirA></ng-template>',
+            })
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [DirA, MyComp],
+            });
+            // Ivy has different error message when dependency is not found
+            const expectedErrorMessage = ivyEnabled ? /NG0201: No provider for TemplateRef found/ :
+                                                      /No provider for TemplateRef/;
+            expect(() => {
+              const fixture = TestBed.createComponent(MyComp);
+              fixture.detectChanges();
+            }).toThrowError(expectedErrorMessage);
+          });
+
+          it('should not throw when SkipSelf and Optional', () => {
+            let directiveTemplateRef;
+            @Directive({selector: '[dirA]', exportAs: 'dirA'})
+            class DirA {
+              constructor(@SkipSelf() @Optional() templateRef: TemplateRef<any>) {
+                directiveTemplateRef = templateRef;
+              }
+            }
+
+            @Component({
+              selector: 'root',
+              template: '<ng-template dirA></ng-template>',
+            })
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [DirA, MyComp],
+            });
+
+            const fixture = TestBed.createComponent(MyComp);
+            fixture.detectChanges();
+
+            expect(directiveTemplateRef).toBeNull();
+          });
+
+          it('should not throw when SkipSelf, Optional, and Host', () => {
+            @Directive({selector: '[dirA]', exportAs: 'dirA'})
+            class DirA {
+              constructor(@SkipSelf() @Optional() @Host() public templateRef: TemplateRef<any>) {}
+            }
+
+            @Component({
+              selector: 'root',
+              template: '<ng-template dirA></ng-template>',
+            })
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [CommonModule],
+              declarations: [DirA, MyComp],
+            });
+
+            expect(() => TestBed.createComponent(MyComp)).not.toThrowError();
+          });
+        });
+
+        describe('ViewContainerRef', () => {
+          it('should support @SkipSelf when injecting ViewContainerRef', () => {
+            let parentViewContainer: ViewContainerRef;
+            let childViewContainer: ViewContainerRef;
+
+            @Directive({selector: '[parent]'})
+            class ParentDirective {
+              constructor(vc: ViewContainerRef) {
+                parentViewContainer = vc;
+              }
+            }
+
+            @Directive({selector: '[child]'})
+            class ChildDirective {
+              constructor(@SkipSelf() vc: ViewContainerRef) {
+                childViewContainer = vc;
+              }
+            }
+
+            @Component({template: '<div parent>parent <span child>child</span></div>'})
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule(
+                {declarations: [ParentDirective, ChildDirective, MyComp]});
+            const fixture = TestBed.createComponent(MyComp);
+            fixture.detectChanges();
+
+            // Assert against the `element` since Ivy always returns a new ViewContainerRef.
+            expect(childViewContainer!.element.nativeElement)
+                .toBe(parentViewContainer!.element.nativeElement);
+            expect(parentViewContainer!.element.nativeElement.tagName).toBe('DIV');
+          });
+
+          it('should get ViewContainerRef using @SkipSelf and @Host', () => {
+            let parentViewContainer: ViewContainerRef;
+            let childViewContainer: ViewContainerRef;
+
+            @Directive({selector: '[parent]'})
+            class ParentDirective {
+              constructor(vc: ViewContainerRef) {
+                parentViewContainer = vc;
+              }
+            }
+
+            @Directive({selector: '[child]'})
+            class ChildDirective {
+              constructor(@SkipSelf() @Host() vc: ViewContainerRef) {
+                childViewContainer = vc;
+              }
+            }
+
+            @Component({template: '<div parent>parent <span child>child</span></div>'})
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule(
+                {declarations: [ParentDirective, ChildDirective, MyComp]});
+
+            if (ivyEnabled) {
+              const fixture = TestBed.createComponent(MyComp);
+              fixture.detectChanges();
+
+              // Assert against the `element` since Ivy always returns a new ViewContainerRef.
+              expect(childViewContainer!.element.nativeElement)
+                  .toBe(parentViewContainer!.element.nativeElement);
+              expect(parentViewContainer!.element.nativeElement.tagName).toBe('DIV');
+            } else {
+              // Template parse errors happen in VE
+              // "<div parent>parent [ERROR ->]<span child>child</span></div>"
+              expect(() => TestBed.createComponent(MyComp))
+                  .toThrowError(/No provider for ViewContainerRef/);
+            }
+          });
+
+          it('should get ViewContainerRef using @SkipSelf and @Host on parent', () => {
+            let parentViewContainer: ViewContainerRef;
+
+            @Directive({selector: '[parent]'})
+            class ParentDirective {
+              constructor(@SkipSelf() vc: ViewContainerRef) {
+                parentViewContainer = vc;
+              }
+            }
+
+            @Component({template: '<div parent>parent</div>'})
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule({declarations: [ParentDirective, MyComp]});
+
+            const fixture = TestBed.createComponent(MyComp);
+            fixture.detectChanges();
+
+            if (ivyEnabled) {
+              // Assert against the `element` since Ivy always returns a new ViewContainerRef.
+              expect(parentViewContainer!.element.nativeElement.tagName).toBe('DIV');
+            } else {
+              // VE Doesn't throw, but the ref is null
+              expect(parentViewContainer!).toBeNull();
+            }
+          });
+
+          it('should throw when injecting ViewContainerRef using @SkipSelf and no ViewContainerRef are available in a current view',
+             () => {
+               @Component({template: '<span>component</span>'})
+               class MyComp {
+                 constructor(@SkipSelf() vc: ViewContainerRef) {}
+               }
+
+               TestBed.configureTestingModule({declarations: [MyComp]});
+
+               expect(() => TestBed.createComponent(MyComp))
+                   .toThrowError(/No provider for ViewContainerRef/);
+             });
+        });
+
+        describe('ChangeDetectorRef', () => {
+          it('should support @SkipSelf when injecting ChangeDetectorRef', () => {
+            let parentRef: ChangeDetectorRef|undefined;
+            let childRef: ChangeDetectorRef|undefined;
+
+            @Directive({selector: '[parent]'})
+            class ParentDirective {
+              constructor(cdr: ChangeDetectorRef) {
+                parentRef = cdr;
+              }
+            }
+
+            @Directive({selector: '[child]'})
+            class ChildDirective {
+              constructor(@SkipSelf() cdr: ChangeDetectorRef) {
+                childRef = cdr;
+              }
+            }
+
+            @Component({template: '<div parent>parent <span child>child</span></div>'})
+            class MyComp {
+            }
+
+            TestBed.configureTestingModule(
+                {declarations: [ParentDirective, ChildDirective, MyComp]});
+            const fixture = TestBed.createComponent(MyComp);
+            fixture.detectChanges();
+
+            // Assert against the `rootNodes` since Ivy always returns a new ChangeDetectorRef.
+            expect((parentRef as ViewRefInternal<any>).rootNodes)
+                .toEqual((childRef as ViewRefInternal<any>).rootNodes);
+          });
+
+          it('should inject host component ChangeDetectorRef when @SkipSelf', () => {
+            let childRef: ChangeDetectorRef|undefined;
+
+            @Component({selector: 'child', template: '...'})
+            class ChildComp {
+              constructor(@SkipSelf() cdr: ChangeDetectorRef) {
+                childRef = cdr;
+              }
+            }
+
+            @Component({template: '<div><child></child></div>'})
+            class MyComp {
+              constructor(public cdr: ChangeDetectorRef) {}
+            }
+
+            TestBed.configureTestingModule({declarations: [ChildComp, MyComp]});
+            const fixture = TestBed.createComponent(MyComp);
+            fixture.detectChanges();
+
+            // Assert against the `rootNodes` since Ivy always returns a new ChangeDetectorRef.
+            expect((childRef as ViewRefInternal<any>).rootNodes)
+                .toEqual((fixture.componentInstance.cdr as ViewRefInternal<any>).rootNodes);
+          });
+
+          it('should throw when ChangeDetectorRef and @SkipSelf and not found', () => {
+            @Component({template: '<div></div>'})
+            class MyComponent {
+              constructor(@SkipSelf() public injector: ChangeDetectorRef) {}
+            }
+
+            @NgModule({
+              declarations: [MyComponent],
+            })
+            class MyModule {
+            }
+
+            TestBed.configureTestingModule({
+              imports: [MyModule],
+            });
+
+            expect(() => TestBed.createComponent(MyComponent))
+                .toThrowError(/No provider for ChangeDetectorRef/);
+          });
+
+          it('should lookup module injector in case @SkipSelf is used for `ChangeDetectorRef` token and Component has no parent',
+             () => {
+               let componentCDR: ChangeDetectorRef;
+               let moduleCDR: ChangeDetectorRef;
+               @Component({selector: 'child', template: '...'})
+               class MyComponent {
+                 constructor(@SkipSelf() public injector: ChangeDetectorRef) {
+                   componentCDR = injector;
+                 }
+               }
+
+               @NgModule({
+                 declarations: [MyComponent],
+                 providers: [{
+                   provide: ChangeDetectorRef,
+                   useValue: {from: 'NG_MODULE'},
+                 }]
+               })
+               class MyModule {
+                 constructor(public injector: ChangeDetectorRef) {
+                   moduleCDR = injector;
+                 }
+               }
+
+               TestBed.configureTestingModule({
+                 imports: [MyModule],
+               });
+               const fixture = TestBed.createComponent(MyComponent);
+               fixture.detectChanges();
+
+               expect((moduleCDR! as any).from).toBe('NG_MODULE');
+               expect((componentCDR! as any).from).toBe('NG_MODULE');
+             });
+        });
+
+        describe('viewProviders', () => {
+          it('should support @SkipSelf when using viewProviders', () => {
+            @Component({
+              selector: 'child',
+              template: '{{ blah | json }}<br />{{ foo | json }}<br />{{ bar | json }}',
+              providers: [{provide: 'Blah', useValue: 'Blah as Provider'}],
+              viewProviders: [
+                {provide: 'Foo', useValue: 'Foo as ViewProvider'},
+                {provide: 'Bar', useValue: 'Bar as ViewProvider'},
+              ]
+            })
+            class Child {
+              constructor(
+                  @Inject('Blah') public blah: String,
+                  @Inject('Foo') public foo: String,
+                  @SkipSelf() @Inject('Bar') public bar: String,
+              ) {}
+            }
+
+            @Component({
+              selector: 'parent',
+              template: '<ng-content></ng-content>',
+              providers: [
+                {provide: 'Blah', useValue: 'Blah as provider'},
+                {provide: 'Bar', useValue: 'Bar as Provider'},
+              ],
+              viewProviders: [
+                {provide: 'Foo', useValue: 'Foo as ViewProvider'},
+                {provide: 'Bar', useValue: 'Bar as ViewProvider'},
+              ]
+            })
+            class Parent {
+            }
+
+            @Component({selector: 'my-app', template: '<parent><child></child></parent>'})
+            class MyApp {
+              @ViewChild(Parent) parent!: Parent;
+              @ViewChild(Child) child!: Child;
+            }
+
+            TestBed.configureTestingModule({declarations: [Child, Parent, MyApp]});
+            const fixture = TestBed.createComponent(MyApp);
+            fixture.detectChanges();
+
+            const child = fixture.componentInstance.child;
+            if (ivyEnabled) {
+              expect(child.bar).toBe('Bar as Provider');
+            } else {
+              // this seems like a ViewEngine bug
+              expect(child.bar).toBe('Bar as ViewProvider');
+            }
+          });
+
+          it('should throw when @SkipSelf and no accessible viewProvider', () => {
+            @Component({
+              selector: 'child',
+              template: '{{ blah | json }}<br />{{ foo | json }}<br />{{ bar | json }}',
+              providers: [{provide: 'Blah', useValue: 'Blah as Provider'}],
+              viewProviders: [
+                {provide: 'Foo', useValue: 'Foo as ViewProvider'},
+                {provide: 'Bar', useValue: 'Bar as ViewProvider'},
+              ]
+            })
+            class Child {
+              constructor(
+                  @Inject('Blah') public blah: String,
+                  @Inject('Foo') public foo: String,
+                  @SkipSelf() @Inject('Bar') public bar: String,
+              ) {}
+            }
+
+            @Component({
+              selector: 'parent',
+              template: '<ng-content></ng-content>',
+              providers: [{provide: 'Blah', useValue: 'Blah as provider'}],
+              viewProviders: [
+                {provide: 'Foo', useValue: 'Foo as ViewProvider'},
+                {provide: 'Bar', useValue: 'Bar as ViewProvider'},
+              ]
+            })
+            class Parent {
+            }
+
+            @Component({selector: 'my-app', template: '<parent><child></child></parent>'})
+            class MyApp {
+            }
+
+            TestBed.configureTestingModule({declarations: [Child, Parent, MyApp]});
+
+            expect(() => TestBed.createComponent(MyApp)).toThrowError(/No provider for Bar/);
+          });
+
+          it('should not throw when @SkipSelf and @Optional with no accessible viewProvider',
+             () => {
+               @Component({
+                 selector: 'child',
+                 template: '{{ blah | json }}<br />{{ foo | json }}<br />{{ bar | json }}',
+                 providers: [{provide: 'Blah', useValue: 'Blah as Provider'}],
+                 viewProviders: [
+                   {provide: 'Foo', useValue: 'Foo as ViewProvider'},
+                   {provide: 'Bar', useValue: 'Bar as ViewProvider'},
+                 ]
+               })
+               class Child {
+                 constructor(
+                     @Inject('Blah') public blah: String,
+                     @Inject('Foo') public foo: String,
+                     @SkipSelf() @Optional() @Inject('Bar') public bar: String,
+                 ) {}
+               }
+
+               @Component({
+                 selector: 'parent',
+                 template: '<ng-content></ng-content>',
+                 providers: [{provide: 'Blah', useValue: 'Blah as provider'}],
+                 viewProviders: [
+                   {provide: 'Foo', useValue: 'Foo as ViewProvider'},
+                   {provide: 'Bar', useValue: 'Bar as ViewProvider'},
+                 ]
+               })
+               class Parent {
+               }
+
+               @Component({selector: 'my-app', template: '<parent><child></child></parent>'})
+               class MyApp {
+               }
+
+               TestBed.configureTestingModule({declarations: [Child, Parent, MyApp]});
+
+               expect(() => TestBed.createComponent(MyApp)).not.toThrowError(/No provider for Bar/);
+             });
+        });
+      });
 
       describe('@Host', () => {
         @Directive({selector: '[dirA]'})
@@ -812,7 +1781,8 @@ describe('di', () => {
 
               TestBed.configureTestingModule({declarations: [DirectiveString, MyComp, MyApp]});
               expect(() => TestBed.createComponent(MyApp))
-                  .toThrowError(/NodeInjector: NOT_FOUND \[String]/);
+                  .toThrowError(
+                      'NG0201: No provider for String found in NodeInjector. Find more at https://angular.io/errors/NG0201');
             });
 
         onlyInIvy('Ivy has different error message when dependency is not found')
@@ -828,7 +1798,7 @@ describe('di', () => {
               TestBed.configureTestingModule(
                   {declarations: [DirectiveA, DirectiveB, MyComp, MyApp]});
               expect(() => TestBed.createComponent(MyApp))
-                  .toThrowError(/NodeInjector: NOT_FOUND \[DirectiveB]/);
+                  .toThrowError(/NG0201: No provider for DirectiveB found in NodeInjector/);
             });
 
         onlyInIvy('Ivy has different error message when dependency is not found')
@@ -853,7 +1823,7 @@ describe('di', () => {
               expect(() => {
                 fixture.componentInstance.myComp.showing = true;
                 fixture.detectChanges();
-              }).toThrowError(/NodeInjector: NOT_FOUND \[DirectiveB]/);
+              }).toThrowError(/NG0201: No provider for DirectiveB found in NodeInjector/);
             });
 
         it('should find providers across embedded views if not passing component boundary', () => {
@@ -892,7 +1862,8 @@ describe('di', () => {
 
               TestBed.configureTestingModule({declarations: [DirectiveComp, MyComp, MyApp]});
               expect(() => TestBed.createComponent(MyApp))
-                  .toThrowError(/NodeInjector: NOT_FOUND \[MyApp]/);
+                  .toThrowError(
+                      'NG0201: No provider for MyApp found in NodeInjector. Find more at https://angular.io/errors/NG0201');
             });
 
         describe('regression', () => {
@@ -979,6 +1950,34 @@ describe('di', () => {
 
       const platformService = childInjector.get(PlatformService);
       expect(platformService.injector.get(ɵINJECTOR_SCOPE)).toBe('platform');
+    });
+
+    it('should create a provider that uses `forwardRef` inside `providedIn`', () => {
+      @Injectable()
+      class ProviderDep {
+        getNumber() {
+          return 3;
+        }
+      }
+
+      @Injectable({providedIn: forwardRef(() => Module)})
+      class Provider {
+        constructor(private _dep: ProviderDep) {}
+        value = this._dep.getNumber() + 2;
+      }
+
+      @Component({template: ''})
+      class Comp {
+        constructor(public provider: Provider) {}
+      }
+
+      @NgModule({declarations: [Comp], exports: [Comp], providers: [ProviderDep]})
+      class Module {
+      }
+
+      TestBed.configureTestingModule({imports: [Module]});
+      const fixture = TestBed.createComponent(Comp);
+      expect(fixture.componentInstance.provider.value).toBe(5);
     });
   });
 
@@ -1132,7 +2131,8 @@ describe('di', () => {
 
       expect(provider!.getMessage()).toBe('bar');
 
-      // ViewEngine incorrectly uses the original class DI config, instead of the one from useClass.
+      // ViewEngine incorrectly uses the original class DI config, instead of the one from
+      // useClass.
       if (ivyEnabled) {
         expect(provider!.dep.name).toBe('BarServiceDep');
       }
@@ -1178,7 +2178,8 @@ describe('di', () => {
       expect(directProvider!.getMessage()).toBe('bar');
       expect(overriddenProvider!.getMessage()).toBe('foo');
 
-      // ViewEngine incorrectly uses the original class DI config, instead of the one from useClass.
+      // ViewEngine incorrectly uses the original class DI config, instead of the one from
+      // useClass.
       if (ivyEnabled) {
         expect(directProvider!.dep.name).toBe('BarServiceDep');
         expect(overriddenProvider!.dep.name).toBe('FooServiceDep');
@@ -1627,7 +2628,8 @@ describe('di', () => {
         TestBed.configureTestingModule({declarations: [MyApp, MyPipe], imports: [CommonModule]});
         const fixture = TestBed.createComponent(MyApp);
         fixture.detectChanges();
-        expect((pipeInstance!.cdr as ViewRef<MyApp>).context).toBe(fixture.componentInstance);
+        expect((pipeInstance!.cdr as ViewRefInternal<MyApp>).context)
+            .toBe(fixture.componentInstance);
       });
 
       it('should inject current component ChangeDetectorRef into directives on the same node as components',
@@ -1643,7 +2645,7 @@ describe('di', () => {
            fixture.detectChanges();
            const app = fixture.componentInstance;
            const comp = fixture.componentInstance.component;
-           expect((comp!.cdr as ViewRef<MyComp>).context).toBe(comp);
+           expect((comp!.cdr as ViewRefInternal<MyComp>).context).toBe(comp);
            // ChangeDetectorRef is the token, ViewRef has historically been the constructor
            expect(app.directive.value).toContain('ViewRef');
 
@@ -1664,7 +2666,7 @@ describe('di', () => {
            const fixture = TestBed.createComponent(MyComp);
            fixture.detectChanges();
            const comp = fixture.componentInstance;
-           expect((comp!.cdr as ViewRef<MyComp>).context).toBe(comp);
+           expect((comp!.cdr as ViewRefInternal<MyComp>).context).toBe(comp);
            // ChangeDetectorRef is the token, ViewRef has historically been the constructor
            expect(comp.directive.value).toContain('ViewRef');
 
@@ -1692,7 +2694,7 @@ describe('di', () => {
            const fixture = TestBed.createComponent(MyApp);
            fixture.detectChanges();
            const app = fixture.componentInstance;
-           expect((app!.cdr as ViewRef<MyApp>).context).toBe(app);
+           expect((app!.cdr as ViewRefInternal<MyApp>).context).toBe(app);
            const comp = fixture.componentInstance.component;
            // ChangeDetectorRef is the token, ViewRef has historically been the constructor
            expect(app.directive.value).toContain('ViewRef');
@@ -1720,7 +2722,7 @@ describe('di', () => {
         const fixture = TestBed.createComponent(MyComp);
         fixture.detectChanges();
         const comp = fixture.componentInstance;
-        expect((comp!.cdr as ViewRef<MyComp>).context).toBe(comp);
+        expect((comp!.cdr as ViewRefInternal<MyComp>).context).toBe(comp);
         // ChangeDetectorRef is the token, ViewRef has historically been the constructor
         expect(comp.directive.value).toContain('ViewRef');
 
@@ -1743,7 +2745,7 @@ describe('di', () => {
         const fixture = TestBed.createComponent(MyComp);
         fixture.detectChanges();
         const comp = fixture.componentInstance;
-        expect((comp!.cdr as ViewRef<MyComp>).context).toBe(comp);
+        expect((comp!.cdr as ViewRefInternal<MyComp>).context).toBe(comp);
         // ChangeDetectorRef is the token, ViewRef has historically been the constructor
         expect(comp.directive.value).toContain('ViewRef');
 
@@ -1773,7 +2775,8 @@ describe('di', () => {
         TestBed.configureTestingModule({declarations: [MyApp, MyDirective]});
         const fixture = TestBed.createComponent(MyApp);
         fixture.detectChanges();
-        expect((dirInstance!.cdr as ViewRef<MyApp>).context).toBe(fixture.componentInstance);
+        expect((dirInstance!.cdr as ViewRefInternal<MyApp>).context)
+            .toBe(fixture.componentInstance);
       });
     });
   });
@@ -1800,6 +2803,138 @@ describe('di', () => {
     });
   });
 
+  describe('attribute tokens', () => {
+    it('should be able to provide an attribute token', () => {
+      const TOKEN = new InjectionToken<string>('Some token');
+      function factory(token: string): string {
+        return token + ' with factory';
+      }
+      @Component({
+        selector: 'my-comp',
+        template: '...',
+        providers: [{
+          provide: TOKEN,
+          deps: [[new Attribute('token')]],
+          useFactory: factory,
+        }]
+      })
+      class MyComp {
+        constructor(@Inject(TOKEN) readonly token: string) {}
+      }
+
+      @Component({template: `<my-comp token='token'></my-comp>`})
+      class WrapperComp {
+        @ViewChild(MyComp) myComp!: MyComp;
+      }
+
+      TestBed.configureTestingModule({declarations: [MyComp, WrapperComp]});
+
+      const fixture = TestBed.createComponent(WrapperComp);
+      fixture.detectChanges();
+      expect(fixture.componentInstance.myComp.token).toBe('token with factory');
+    });
+  });
+
+  it('should be able to use Host in `useFactory` dependency config', () => {
+    // Scenario:
+    // ---------
+    // <root (provides token A)>
+    //   <comp (provides token B via useFactory(@Host() @Inject(A))></comp>
+    // </root>
+    @Component({
+      selector: 'root',
+      template: '<comp></comp>',
+      viewProviders: [{
+        provide: 'A',
+        useValue: 'A from Root',
+      }]
+    })
+    class Root {
+    }
+
+    @Component({
+      selector: 'comp',
+      template: '{{ token }}',
+      viewProviders: [{
+        provide: 'B',
+        deps: [[new Inject('A'), new Host()]],
+        useFactory: (token: string) => `${token} (processed by useFactory)`,
+      }]
+    })
+    class Comp {
+      constructor(@Inject('B') readonly token: string) {}
+    }
+
+    @Component({
+      template: `<root></root>`,
+    })
+    class App {
+    }
+
+    TestBed.configureTestingModule({declarations: [Root, Comp, App]});
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toBe('A from Root (processed by useFactory)');
+  });
+
+  it('should not lookup outside of the host element when Host is used in `useFactory`', () => {
+    // Scenario:
+    // ---------
+    // <root (provides token A)>
+    //   <intermediate>
+    //     <comp (provides token B via useFactory(@Host() @Inject(A))></comp>
+    //   </intermediate>
+    // </root>
+    @Component({
+      selector: 'root',
+      template: '<intermediate></intermediate>',
+      viewProviders: [{
+        provide: 'A',
+        useValue: 'A from Root',
+      }]
+    })
+    class Root {
+    }
+
+    @Component({
+      selector: 'intermediate',
+      template: '<comp></comp>',
+    })
+    class Intermediate {
+    }
+
+    @Component({
+      selector: 'comp',
+      template: '{{ token }}',
+      viewProviders: [{
+        provide: 'B',
+        deps: [[new Inject('A'), new Host(), new Optional()]],
+        useFactory: (token: string) =>
+            token ? `${token} (processed by useFactory)` : 'No token A found',
+      }]
+    })
+    class Comp {
+      constructor(@Inject('B') readonly token: string) {}
+    }
+
+    @Component({
+      template: `<root></root>`,
+    })
+    class App {
+    }
+
+    TestBed.configureTestingModule({declarations: [Root, Comp, App, Intermediate]});
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    // Making sure that the `@Host` takes effect and token `A` becomes unavailable in DI since it's
+    // defined one level up from the Comp's host view.
+    expect(fixture.nativeElement.textContent).toBe('No token A found');
+  });
+
   it('should not cause cyclic dependency if same token is requested in deps with @SkipSelf', () => {
     @Component({
       selector: 'my-comp',
@@ -1807,8 +2942,9 @@ describe('di', () => {
       providers: [{
         provide: LOCALE_ID,
         useFactory: () => 'ja-JP',
-        // Note: `LOCALE_ID` is also provided within APPLICATION_MODULE_PROVIDERS, so we use it here
-        // as a dep and making sure it doesn't cause cyclic dependency (since @SkipSelf is present)
+        // Note: `LOCALE_ID` is also provided within APPLICATION_MODULE_PROVIDERS, so we use it
+        // here as a dep and making sure it doesn't cause cyclic dependency (since @SkipSelf is
+        // present)
         deps: [[new Inject(LOCALE_ID), new Optional(), new SkipSelf()]]
       }]
     })
@@ -2049,6 +3185,26 @@ describe('di', () => {
       expect(directive.bindingAttr).toBeNull();
       expect(directive.outputAttr).toBeNull();
       expect(directive.other).toBe('otherValue');
+    });
+
+    it('should inject `null` for attributes with data bindings', () => {
+      @Directive({selector: '[dir]'})
+      class MyDir {
+        constructor(@Attribute('title') public attrValue: string) {}
+      }
+
+      @Component({template: '<div dir title="title {{ value }}"></div>'})
+      class MyComp {
+        @ViewChild(MyDir) directiveInstance!: MyDir;
+        value = 'value';
+      }
+
+      TestBed.configureTestingModule({declarations: [MyDir, MyComp]});
+      const fixture = TestBed.createComponent(MyComp);
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.directiveInstance.attrValue).toBeNull();
+      expect(fixture.nativeElement.querySelector('div').getAttribute('title')).toBe('title value');
     });
   });
 
@@ -2299,5 +3455,15 @@ describe('di', () => {
 
       expect(fixture.componentInstance.dir.token).toBe('parent');
     });
+  });
+
+  it('should not be able to inject ViewRef', () => {
+    @Component({template: ''})
+    class App {
+      constructor(_viewRef: ViewRef) {}
+    }
+
+    TestBed.configureTestingModule({declarations: [App]});
+    expect(() => TestBed.createComponent(App)).toThrowError(/NullInjectorError/);
   });
 });

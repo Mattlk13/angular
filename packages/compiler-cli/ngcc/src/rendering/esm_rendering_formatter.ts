@@ -9,8 +9,8 @@ import {Statement} from '@angular/compiler';
 import MagicString from 'magic-string';
 import * as ts from 'typescript';
 
-import {absoluteFromSourceFile, AbsoluteFsPath, dirname, relative} from '../../../src/ngtsc/file_system';
-import {NOOP_DEFAULT_IMPORT_RECORDER, Reexport} from '../../../src/ngtsc/imports';
+import {absoluteFromSourceFile, AbsoluteFsPath, PathManipulation, toRelativeImport} from '../../../src/ngtsc/file_system';
+import {Reexport} from '../../../src/ngtsc/imports';
 import {Import, ImportManager, translateStatement} from '../../../src/ngtsc/translator';
 import {isDtsPath} from '../../../src/ngtsc/util/src/typescript';
 import {ModuleWithProvidersInfo} from '../analysis/module_with_providers_analyzer';
@@ -28,7 +28,9 @@ import {stripExtension} from './utils';
 export class EsmRenderingFormatter implements RenderingFormatter {
   protected printer = ts.createPrinter({newLine: ts.NewLineKind.LineFeed});
 
-  constructor(protected host: NgccReflectionHost, protected isCore: boolean) {}
+  constructor(
+      protected fs: PathManipulation, protected host: NgccReflectionHost,
+      protected isCore: boolean) {}
 
   /**
    *  Add the imports at the top of the file, after any imports that are already there.
@@ -40,7 +42,7 @@ export class EsmRenderingFormatter implements RenderingFormatter {
 
     const insertionPoint = this.findEndOfImports(sf);
     const renderedImports =
-        imports.map(i => `import * as ${i.qualifier} from '${i.specifier}';\n`).join('');
+        imports.map(i => `import * as ${i.qualifier.text} from '${i.specifier}';\n`).join('');
     output.appendLeft(insertionPoint, renderedImports);
   }
 
@@ -57,8 +59,9 @@ export class EsmRenderingFormatter implements RenderingFormatter {
 
       if (from) {
         const basePath = stripExtension(from);
-        const relativePath = './' + relative(dirname(entryPointBasePath), basePath);
-        exportFrom = entryPointBasePath !== basePath ? ` from '${relativePath}'` : '';
+        const relativePath = this.fs.relative(this.fs.dirname(entryPointBasePath), basePath);
+        const relativeImport = toRelativeImport(relativePath);
+        exportFrom = entryPointBasePath !== basePath ? ` from '${relativeImport}'` : '';
       }
 
       const exportStr = `\nexport {${e.identifier}}${exportFrom};`;
@@ -170,7 +173,7 @@ export class EsmRenderingFormatter implements RenderingFormatter {
   }
 
   /**
-   * Rewrite the the IVY switch markers to indicate we are in IVY mode.
+   * Rewrite the IVY switch markers to indicate we are in IVY mode.
    */
   rewriteSwitchableDeclarations(
       outputText: MagicString, sourceFile: ts.SourceFile,
@@ -197,10 +200,10 @@ export class EsmRenderingFormatter implements RenderingFormatter {
       const ngModuleName = info.ngModule.node.name.text;
       const declarationFile = absoluteFromSourceFile(info.declaration.getSourceFile());
       const ngModuleFile = absoluteFromSourceFile(info.ngModule.node.getSourceFile());
+      const relativePath = this.fs.relative(this.fs.dirname(declarationFile), ngModuleFile);
+      const relativeImport = toRelativeImport(relativePath);
       const importPath = info.ngModule.ownedByModuleGuess ||
-          (declarationFile !== ngModuleFile ?
-               stripExtension(`./${relative(dirname(declarationFile), ngModuleFile)}`) :
-               null);
+          (declarationFile !== ngModuleFile ? stripExtension(relativeImport) : null);
       const ngModule = generateImportString(importManager, importPath, ngModuleName);
 
       if (info.declaration.type) {
@@ -246,8 +249,7 @@ export class EsmRenderingFormatter implements RenderingFormatter {
    * @return The JavaScript code corresponding to `stmt` (in the appropriate format).
    */
   printStatement(stmt: Statement, sourceFile: ts.SourceFile, importManager: ImportManager): string {
-    const node = translateStatement(
-        stmt, importManager, NOOP_DEFAULT_IMPORT_RECORDER, ts.ScriptTarget.ES2015);
+    const node = translateStatement(stmt, importManager);
     const code = this.printer.printNode(ts.EmitHint.Unspecified, node, sourceFile);
 
     return code;
@@ -262,8 +264,6 @@ export class EsmRenderingFormatter implements RenderingFormatter {
     }
     return 0;
   }
-
-
 
   /**
    * Check whether the given type is the core Angular `ModuleWithProviders` interface.
@@ -291,7 +291,8 @@ function findStatement(node: ts.Node): ts.Statement|undefined {
 function generateImportString(
     importManager: ImportManager, importPath: string|null, importName: string) {
   const importAs = importPath ? importManager.generateNamedImport(importPath, importName) : null;
-  return importAs ? `${importAs.moduleImport}.${importAs.symbol}` : `${importName}`;
+  return importAs && importAs.moduleImport ? `${importAs.moduleImport.text}.${importAs.symbol}` :
+                                             `${importName}`;
 }
 
 function getNextSiblingInArray<T extends ts.Node>(node: T, array: ts.NodeArray<T>): T|null {

@@ -10,19 +10,21 @@ import * as ts from 'typescript';
 import {FatalDiagnosticError, makeDiagnostic} from '../../../src/ngtsc/diagnostics';
 import {absoluteFrom, getFileSystem, getSourceFileOrError} from '../../../src/ngtsc/file_system';
 import {runInEachFileSystem, TestFile} from '../../../src/ngtsc/file_system/testing';
-import {ClassDeclaration, Decorator} from '../../../src/ngtsc/reflection';
+import {SemanticSymbol} from '../../../src/ngtsc/incremental/semantic_graph';
+import {MockLogger} from '../../../src/ngtsc/logging/testing';
+import {ClassDeclaration, DeclarationNode, Decorator} from '../../../src/ngtsc/reflection';
+import {loadFakeCore, loadTestFiles} from '../../../src/ngtsc/testing';
 import {AnalysisOutput, CompileResult, DecoratorHandler, DetectResult, HandlerPrecedence} from '../../../src/ngtsc/transform';
-import {loadFakeCore, loadTestFiles} from '../../../test/helpers';
 import {DecorationAnalyzer} from '../../src/analysis/decoration_analyzer';
 import {NgccReferencesRegistry} from '../../src/analysis/ngcc_references_registry';
 import {CompiledClass, DecorationAnalyses} from '../../src/analysis/types';
 import {Esm2015ReflectionHost} from '../../src/host/esm2015_host';
 import {Migration, MigrationHost} from '../../src/migrations/migration';
-import {MockLogger} from '../helpers/mock_logger';
 import {getRootFiles, makeTestEntryPointBundle} from '../helpers/utils';
 
-type DecoratorHandlerWithResolve = DecoratorHandler<unknown, unknown, unknown>&{
-  resolve: NonNullable<DecoratorHandler<unknown, unknown, unknown>['resolve']>;
+type DecoratorHandlerWithResolve =
+    DecoratorHandler<unknown, unknown, SemanticSymbol|null, unknown>&{
+  resolve: NonNullable<DecoratorHandler<unknown, unknown, SemanticSymbol|null, unknown>['resolve']>;
 };
 
 runInEachFileSystem(() => {
@@ -46,13 +48,14 @@ runInEachFileSystem(() => {
         const handler = jasmine.createSpyObj<DecoratorHandlerWithResolve>('TestDecoratorHandler', [
           'detect',
           'analyze',
+          'symbol',
           'register',
           'resolve',
-          'compile',
+          'compileFull',
         ]);
         // Only detect the Component and Directive decorators
         handler.detect.and.callFake(
-            (node: ts.Declaration, decorators: Decorator[]|null): DetectResult<unknown>|
+            (node: DeclarationNode, decorators: Decorator[]|null): DetectResult<unknown>|
             undefined => {
               const className = (node as any).name.text;
               if (decorators === null) {
@@ -76,16 +79,16 @@ runInEachFileSystem(() => {
               }
             });
         // The "test" analysis is an object with the name of the decorator being analyzed
-        handler.analyze.and.callFake((decl: ts.Declaration, dec: Decorator) => {
+        handler.analyze.and.callFake((decl: DeclarationNode, dec: Decorator) => {
           logs.push(`analyze: ${(decl as any).name.text}@${dec.name}`);
           return {
-            analysis: {decoratorName: dec.name},
+            analysis: !options.analyzeError ? {decoratorName: dec.name} : undefined,
             diagnostics: options.analyzeError ? [makeDiagnostic(9999, decl, 'analyze diagnostic')] :
                                                 undefined
           };
         });
         // The "test" resolution is just setting `resolved: true` on the analysis
-        handler.resolve.and.callFake((decl: ts.Declaration, analysis: any) => {
+        handler.resolve.and.callFake((decl: DeclarationNode, analysis: any) => {
           logs.push(`resolve: ${(decl as any).name.text}@${analysis.decoratorName}`);
           analysis.resolved = true;
           return {
@@ -95,10 +98,10 @@ runInEachFileSystem(() => {
         });
         // The "test" compilation result is just the name of the decorator being compiled
         // (suffixed with `(compiled)`)
-        (handler.compile as any).and.callFake((decl: ts.Declaration, analysis: any) => {
+        handler.compileFull.and.callFake((decl: DeclarationNode, analysis: any) => {
           logs.push(`compile: ${(decl as any).name.text}@${analysis.decoratorName} (resolved: ${
               analysis.resolved})`);
-          return `@${analysis.decoratorName} (compiled)`;
+          return `@${analysis.decoratorName} (compiled)` as any;
         });
         return handler;
       };
@@ -407,14 +410,14 @@ runInEachFileSystem(() => {
                 `,
                 },
               ],
-              {analyzeError: true, resolveError: true});
+              {analyzeError: true, resolveError: false});
           analyzer.analyzeProgram();
           expect(diagnosticLogs.length).toEqual(1);
           expect(diagnosticLogs[0]).toEqual(jasmine.objectContaining({code: -999999}));
           expect(testHandler.analyze).toHaveBeenCalled();
           expect(testHandler.register).not.toHaveBeenCalled();
           expect(testHandler.resolve).not.toHaveBeenCalled();
-          expect(testHandler.compile).not.toHaveBeenCalled();
+          expect(testHandler.compileFull).not.toHaveBeenCalled();
         });
 
         it('should report resolve diagnostics to the `diagnosticHandler` callback', () => {
@@ -436,13 +439,13 @@ runInEachFileSystem(() => {
           expect(testHandler.analyze).toHaveBeenCalled();
           expect(testHandler.register).toHaveBeenCalled();
           expect(testHandler.resolve).toHaveBeenCalled();
-          expect(testHandler.compile).not.toHaveBeenCalled();
+          expect(testHandler.compileFull).not.toHaveBeenCalled();
         });
       });
 
       describe('declaration files', () => {
         it('should not run decorator handlers against declaration files', () => {
-          class FakeDecoratorHandler implements DecoratorHandler<{}|null, unknown, unknown> {
+          class FakeDecoratorHandler implements DecoratorHandler<{}|null, unknown, null, unknown> {
             name = 'FakeDecoratorHandler';
             precedence = HandlerPrecedence.PRIMARY;
 
@@ -452,7 +455,10 @@ runInEachFileSystem(() => {
             analyze(): AnalysisOutput<unknown> {
               throw new Error('analyze should not have been called');
             }
-            compile(): CompileResult {
+            symbol(): null {
+              throw new Error('symbol should not have been called');
+            }
+            compileFull(): CompileResult {
               throw new Error('compile should not have been called');
             }
           }

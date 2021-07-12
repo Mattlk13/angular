@@ -8,9 +8,10 @@
 import * as ts from 'typescript';
 
 import {IncrementalBuild} from '../../../src/ngtsc/incremental/api';
+import {SemanticSymbol} from '../../../src/ngtsc/incremental/semantic_graph';
 import {NOOP_PERF_RECORDER} from '../../../src/ngtsc/perf';
 import {ClassDeclaration, Decorator} from '../../../src/ngtsc/reflection';
-import {DecoratorHandler, DtsTransformRegistry, HandlerFlags, Trait, TraitCompiler} from '../../../src/ngtsc/transform';
+import {CompilationMode, DecoratorHandler, DtsTransformRegistry, HandlerFlags, Trait, TraitCompiler} from '../../../src/ngtsc/transform';
 import {NgccReflectionHost} from '../host/ngcc_host';
 import {isDefined} from '../utils';
 
@@ -22,11 +23,12 @@ import {isDefined} from '../utils';
  */
 export class NgccTraitCompiler extends TraitCompiler {
   constructor(
-      handlers: DecoratorHandler<unknown, unknown, unknown>[],
+      handlers: DecoratorHandler<unknown, unknown, SemanticSymbol|null, unknown>[],
       private ngccReflector: NgccReflectionHost) {
     super(
         handlers, ngccReflector, NOOP_PERF_RECORDER, new NoIncrementalBuild(),
-        /* compileNonExportedClasses */ true, new DtsTransformRegistry());
+        /* compileNonExportedClasses */ true, CompilationMode.FULL, new DtsTransformRegistry(),
+        /* semanticDepGraphUpdater */ null);
   }
 
   get analyzedFiles(): ts.SourceFile[] {
@@ -54,7 +56,7 @@ export class NgccTraitCompiler extends TraitCompiler {
    * @param flags optional bitwise flag to influence the compilation of the decorator.
    */
   injectSyntheticDecorator(clazz: ClassDeclaration, decorator: Decorator, flags?: HandlerFlags):
-      Trait<unknown, unknown, unknown>[] {
+      Trait<unknown, unknown, SemanticSymbol|null, unknown>[] {
     const migratedTraits = this.detectTraits(clazz, [decorator]);
     if (migratedTraits === null) {
       return [];
@@ -83,11 +85,13 @@ export class NgccTraitCompiler extends TraitCompiler {
 }
 
 class NoIncrementalBuild implements IncrementalBuild<any, any> {
-  priorWorkFor(sf: ts.SourceFile): any[]|null {
+  priorAnalysisFor(sf: ts.SourceFile): any[]|null {
     return null;
   }
 
   priorTypeCheckingResultsFor(): null {
     return null;
   }
+
+  recordSuccessfulTypeCheck(): void {}
 }

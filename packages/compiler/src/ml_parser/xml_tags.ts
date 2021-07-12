@@ -16,10 +16,10 @@ export class XmlTagDefinition implements TagDefinition {
   parentToAdd!: string;
   // TODO(issue/24571): remove '!'.
   implicitNamespacePrefix!: string;
-  contentType: TagContentType = TagContentType.PARSABLE_DATA;
   isVoid: boolean = false;
   ignoreFirstLf: boolean = false;
   canSelfClose: boolean = true;
+  preventNamespaceInheritance: boolean = false;
 
   requireExtraParent(currentParent: string): boolean {
     return false;
@@ -27,6 +27,10 @@ export class XmlTagDefinition implements TagDefinition {
 
   isClosedByChild(name: string): boolean {
     return false;
+  }
+
+  getContentType(): TagContentType {
+    return TagContentType.PARSABLE_DATA;
   }
 }
 

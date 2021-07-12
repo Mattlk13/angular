@@ -15,12 +15,14 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { AppComponent } from 'app/app.component';
 import { CustomIconRegistry, SVG_ICONS } from 'app/shared/custom-icon-registry';
 import { Deployment } from 'app/shared/deployment.service';
+import { CookiesPopupComponent } from 'app/layout/cookies-popup/cookies-popup.component';
 import { DocViewerComponent } from 'app/layout/doc-viewer/doc-viewer.component';
 import { DtComponent } from 'app/layout/doc-viewer/dt.component';
 import { ModeBannerComponent } from 'app/layout/mode-banner/mode-banner.component';
 import { GaService } from 'app/shared/ga.service';
 import { Logger } from 'app/shared/logger.service';
 import { LocationService } from 'app/shared/location.service';
+import { STORAGE_PROVIDERS } from 'app/shared/storage.service';
 import { NavigationService } from 'app/navigation/navigation.service';
 import { DocumentService } from 'app/documents/document.service';
 import { SearchService } from 'app/search/search.service';
@@ -39,9 +41,10 @@ import { WindowToken, windowProvider } from 'app/shared/window';
 
 import { CustomElementsModule } from 'app/custom-elements/custom-elements.module';
 import { SharedModule } from 'app/shared/shared.module';
+import { ThemeToggleComponent } from 'app/shared/theme-picker/theme-toggle.component';
 import { SwUpdatesModule } from 'app/sw-updates/sw-updates.module';
 
-import {environment} from '../environments/environment';
+import { environment } from '../environments/environment';
 
 // These are the hardcoded inline svg sources to be used by the `<mat-icon>` component.
 // tslint:disable: max-line-length
@@ -127,6 +130,20 @@ export const svgIconProviders = [
     },
     multi: true,
   },
+  {
+    provide: SVG_ICONS,
+    useValue: {
+      namespace: 'logos',
+      name: 'youtube',
+      svgSource:
+        '<svg focusable="false" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+          '<path d="M21.58 7.19c-.23-.86-.91-1.54-1.77-1.77C18.25 5 12 5 12 5s-6.25 0-7.81.42c-.86.23-1.54.91-1.77 1.77' +
+            'C2 8.75 2 12 2 12s0 3.25.42 4.81c.23.86.91 1.54 1.77 1.77C5.75 19 12 19 12 19s6.25 0 7.81-.42' +
+            'c.86-.23 1.54-.91 1.77-1.77C22 15.25 22 12 22 12s0-3.25-.42-4.81zM10 15V9l5.2 3-5.2 3z" />' +
+        '</svg>',
+    },
+    multi: true,
+  },
 ];
 // tslint:enable: max-line-length
 
@@ -147,6 +164,7 @@ export const svgIconProviders = [
   ],
   declarations: [
     AppComponent,
+    CookiesPopupComponent,
     DocViewerComponent,
     DtComponent,
     FooterComponent,
@@ -156,6 +174,7 @@ export const svgIconProviders = [
     SearchBoxComponent,
     NotificationComponent,
     TopMenuComponent,
+    ThemeToggleComponent,
   ],
   providers: [
     Deployment,
@@ -171,6 +190,7 @@ export const svgIconProviders = [
     ScrollService,
     ScrollSpyService,
     SearchService,
+    STORAGE_PROVIDERS,
     svgIconProviders,
     TocService,
     { provide: CurrentDateToken, useFactory: currentDateProvider },

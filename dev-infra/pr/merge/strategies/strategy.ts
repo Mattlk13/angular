@@ -6,7 +6,7 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {GitClient} from '../../../utils/git';
+import {AuthenticatedGitClient} from '../../../utils/git/authenticated-git-client';
 import {PullRequestFailure} from '../failures';
 import {PullRequest} from '../pull-request';
 
@@ -22,7 +22,7 @@ export const TEMP_PR_HEAD_BRANCH = 'merge_pr_head';
  * merges it into the determined target branches.
  */
 export abstract class MergeStrategy {
-  constructor(protected git: GitClient) {}
+  constructor(protected git: AuthenticatedGitClient) {}
 
   /**
    * Prepares a merge of the given pull request. The strategy by default will
@@ -69,7 +69,8 @@ export abstract class MergeStrategy {
    * @returns A list of branches for which the revisions could not be cherry-picked into.
    */
   protected cherryPickIntoTargetBranches(revisionRange: string, targetBranches: string[], options: {
-    dryRun?: boolean
+    dryRun?: boolean,
+    linkToOriginalCommits?: boolean,
   } = {}) {
     const cherryPickArgs = [revisionRange];
     const failedBranches: string[] = [];
@@ -80,6 +81,14 @@ export abstract class MergeStrategy {
       // applied directly in the working tree. This allow us to easily discard the changes
       // for dry-run purposes.
       cherryPickArgs.push('--no-commit');
+    }
+
+    if (options.linkToOriginalCommits) {
+      // We add `-x` when cherry-picking as that will allow us to easily jump to original
+      // commits for cherry-picked commits. With that flag set, Git will automatically append
+      // the original SHA/revision to the commit message. e.g. `(cherry picked from commit <..>)`.
+      // https://git-scm.com/docs/git-cherry-pick#Documentation/git-cherry-pick.txt--x.
+      cherryPickArgs.push('-x');
     }
 
     // Cherry-pick the refspec into all determined target branches.
@@ -115,7 +124,8 @@ export abstract class MergeStrategy {
     });
     // Fetch all target branches with a single command. We don't want to fetch them
     // individually as that could cause an unnecessary slow-down.
-    this.git.run(['fetch', '-f', this.git.repoGitUrl, ...fetchRefspecs, ...extraRefspecs]);
+    this.git.run(
+        ['fetch', '-q', '-f', this.git.getRepoGitUrl(), ...fetchRefspecs, ...extraRefspecs]);
   }
 
   /** Pushes the given target branches upstream. */
@@ -126,6 +136,6 @@ export abstract class MergeStrategy {
     });
     // Push all target branches with a single command if we don't run in dry-run mode.
     // We don't want to push them individually as that could cause an unnecessary slow-down.
-    this.git.run(['push', this.git.repoGitUrl, ...pushRefspecs]);
+    this.git.run(['push', this.git.getRepoGitUrl(), ...pushRefspecs]);
   }
 }

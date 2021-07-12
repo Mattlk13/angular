@@ -127,9 +127,9 @@ export interface StrictTemplateOptions {
   /**
    * If `true`, implies all template strictness flags below (unless individually disabled).
    *
-   * Has no effect unless `fullTemplateTypeCheck` is also enabled.
+   * This flag is a superset of `fullTemplateTypeCheck`.
    *
-   * Defaults to `false`, even if "fullTemplateTypeCheck" is set.
+   * Defaults to `false`, even if "fullTemplateTypeCheck" is `true`.
    */
   strictTemplates?: boolean;
 
@@ -146,6 +146,18 @@ export interface StrictTemplateOptions {
    * Defaults to `false`, even if "fullTemplateTypeCheck" is set.
    */
   strictInputTypes?: boolean;
+
+  /**
+   * Whether to check if the input binding attempts to assign to a restricted field (readonly,
+   * private, or protected) on the directive/component.
+   *
+   * Defaults to `false`, even if "fullTemplateTypeCheck", "strictTemplates" and/or
+   * "strictInputTypes" is set. Note that if `strictInputTypes` is not set, or set to `false`, this
+   * flag has no effect.
+   *
+   * Tracking issue for enabling this by default: https://github.com/angular/angular/issues/38400
+   */
+  strictInputAccessModifiers?: boolean;
 
   /**
    * Whether to use strict null types for input bindings for directives.
@@ -298,6 +310,22 @@ export interface I18nOptions {
   i18nInLocale?: string;
 
   /**
+   * Export format (xlf, xlf2 or xmb) when the xi18n operation is requested.
+   */
+  i18nOutFormat?: string;
+
+  /**
+   * Path to the extracted message file to emit when the xi18n operation is requested.
+   */
+  i18nOutFile?: string;
+
+
+  /**
+   * Locale of the application (used when xi18n is requested).
+   */
+  i18nOutLocale?: string;
+
+  /**
    * Render `$localize` messages with legacy format ids.
    *
    * This is only active if we are building with `enableIvy: true`.
@@ -326,6 +354,22 @@ export interface I18nOptions {
    * The default is `false`, but this will be switched in a future major release.
    */
   i18nNormalizeLineEndingsInICUs?: boolean;
+}
+
+/**
+ * Options that specify compilation target.
+ *
+ * @publicApi
+ */
+export interface TargetOptions {
+  /**
+   * Specifies the compilation mode to use. The following modes are available:
+   * - 'full': generates fully AOT compiled code using Ivy instructions.
+   * - 'partial': generates code in a stable, but intermediate form suitable for publication to NPM.
+   *
+   * The default value is 'full'.
+   */
+  compilationMode?: 'full'|'partial';
 }
 
 /**

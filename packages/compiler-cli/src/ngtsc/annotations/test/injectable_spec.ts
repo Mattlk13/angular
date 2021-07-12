@@ -8,8 +8,8 @@
 import {ErrorCode, FatalDiagnosticError, ngErrorCode} from '../../diagnostics';
 import {absoluteFrom} from '../../file_system';
 import {runInEachFileSystem} from '../../file_system/testing';
-import {NOOP_DEFAULT_IMPORT_RECORDER} from '../../imports';
 import {InjectableClassRegistry} from '../../metadata';
+import {NOOP_PERF_RECORDER} from '../../perf';
 import {isNamedClassDeclaration, TypeScriptReflectionHost} from '../../reflection';
 import {getDeclaration, makeProgram} from '../../testing';
 import {InjectableDecoratorHandler} from '../src/injectable';
@@ -22,7 +22,7 @@ runInEachFileSystem(() => {
            const {handler, TestClass, ɵprov, analysis} =
                setupHandler(/* errorOnDuplicateProv */ true);
            try {
-             handler.compile(TestClass, analysis);
+             handler.compileFull(TestClass, analysis);
              return fail('Compilation should have failed');
            } catch (err) {
              if (!(err instanceof FatalDiagnosticError)) {
@@ -39,7 +39,7 @@ runInEachFileSystem(() => {
          () => {
            const {handler, TestClass, ɵprov, analysis} =
                setupHandler(/* errorOnDuplicateProv */ false);
-           const res = handler.compile(TestClass, analysis);
+           const res = handler.compileFull(TestClass, analysis);
            expect(res).not.toContain(jasmine.objectContaining({name: 'ɵprov'}));
          });
     });
@@ -69,8 +69,8 @@ function setupHandler(errorOnDuplicateProv: boolean) {
   const reflectionHost = new TypeScriptReflectionHost(checker);
   const injectableRegistry = new InjectableClassRegistry(reflectionHost);
   const handler = new InjectableDecoratorHandler(
-      reflectionHost, NOOP_DEFAULT_IMPORT_RECORDER, /* isCore */ false,
-      /* strictCtorDeps */ false, injectableRegistry, errorOnDuplicateProv);
+      reflectionHost, /* isCore */ false,
+      /* strictCtorDeps */ false, injectableRegistry, NOOP_PERF_RECORDER, errorOnDuplicateProv);
   const TestClass = getDeclaration(program, ENTRY_FILE, 'TestClass', isNamedClassDeclaration);
   const ɵprov = reflectionHost.getMembersOfClass(TestClass).find(member => member.name === 'ɵprov');
   if (ɵprov === undefined) {

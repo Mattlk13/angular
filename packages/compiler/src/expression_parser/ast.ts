@@ -86,6 +86,20 @@ export class ImplicitReceiver extends AST {
 }
 
 /**
+ * Receiver when something is accessed through `this` (e.g. `this.foo`). Note that this class
+ * inherits from `ImplicitReceiver`, because accessing something through `this` is treated the
+ * same as accessing it implicitly inside of an Angular template (e.g. `[attr.title]="this.title"`
+ * is the same as `[attr.title]="title"`.). Inheriting allows for the `this` accesses to be treated
+ * the same as implicit ones, except for a couple of exceptions like `$event` and `$any`.
+ * TODO: we should find a way for this class not to extend from `ImplicitReceiver` in the future.
+ */
+export class ThisReceiver extends ImplicitReceiver {
+  visit(visitor: AstVisitor, context: any = null): any {
+    return visitor.visitThisReceiver?.(this, context);
+  }
+}
+
+/**
  * Multiple expressions separated by a semicolon.
  */
 export class Chain extends AST {
@@ -142,7 +156,8 @@ export class SafePropertyRead extends ASTWithName {
 }
 
 export class KeyedRead extends AST {
-  constructor(span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public obj: AST, public key: AST) {
+  constructor(
+      span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public receiver: AST, public key: AST) {
     super(span, sourceSpan);
   }
   visit(visitor: AstVisitor, context: any = null): any {
@@ -150,9 +165,19 @@ export class KeyedRead extends AST {
   }
 }
 
+export class SafeKeyedRead extends AST {
+  constructor(
+      span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public receiver: AST, public key: AST) {
+    super(span, sourceSpan);
+  }
+  visit(visitor: AstVisitor, context: any = null): any {
+    return visitor.visitSafeKeyedRead(this, context);
+  }
+}
+
 export class KeyedWrite extends AST {
   constructor(
-      span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public obj: AST, public key: AST,
+      span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public receiver: AST, public key: AST,
       public value: AST) {
     super(span, sourceSpan);
   }
@@ -227,6 +252,52 @@ export class Binary extends AST {
   }
 }
 
+/**
+ * For backwards compatibility reasons, `Unary` inherits from `Binary` and mimics the binary AST
+ * node that was originally used. This inheritance relation can be deleted in some future major,
+ * after consumers have been given a chance to fully support Unary.
+ */
+export class Unary extends Binary {
+  // Redeclare the properties that are inherited from `Binary` as `never`, as consumers should not
+  // depend on these fields when operating on `Unary`.
+  left: never;
+  right: never;
+  operation: never;
+
+  /**
+   * Creates a unary minus expression "-x", represented as `Binary` using "0 - x".
+   */
+  static createMinus(span: ParseSpan, sourceSpan: AbsoluteSourceSpan, expr: AST): Unary {
+    return new Unary(
+        span, sourceSpan, '-', expr, '-', new LiteralPrimitive(span, sourceSpan, 0), expr);
+  }
+
+  /**
+   * Creates a unary plus expression "+x", represented as `Binary` using "x - 0".
+   */
+  static createPlus(span: ParseSpan, sourceSpan: AbsoluteSourceSpan, expr: AST): Unary {
+    return new Unary(
+        span, sourceSpan, '+', expr, '-', expr, new LiteralPrimitive(span, sourceSpan, 0));
+  }
+
+  /**
+   * During the deprecation period this constructor is private, to avoid consumers from creating
+   * a `Unary` with the fallback properties for `Binary`.
+   */
+  private constructor(
+      span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public operator: string, public expr: AST,
+      binaryOp: string, binaryLeft: AST, binaryRight: AST) {
+    super(span, sourceSpan, binaryOp, binaryLeft, binaryRight);
+  }
+
+  visit(visitor: AstVisitor, context: any = null): any {
+    if (visitor.visitUnary !== undefined) {
+      return visitor.visitUnary(this, context);
+    }
+    return visitor.visitBinary(this, context);
+  }
+}
+
 export class PrefixNot extends AST {
   constructor(span: ParseSpan, sourceSpan: AbsoluteSourceSpan, public expression: AST) {
     super(span, sourceSpan);
@@ -248,7 +319,8 @@ export class NonNullAssert extends AST {
 export class MethodCall extends ASTWithName {
   constructor(
       span: ParseSpan, sourceSpan: AbsoluteSourceSpan, nameSpan: AbsoluteSourceSpan,
-      public receiver: AST, public name: string, public args: any[]) {
+      public receiver: AST, public name: string, public args: any[],
+      public argumentSpan: AbsoluteSourceSpan) {
     super(span, sourceSpan, nameSpan);
   }
   visit(visitor: AstVisitor, context: any = null): any {
@@ -259,7 +331,8 @@ export class MethodCall extends ASTWithName {
 export class SafeMethodCall extends ASTWithName {
   constructor(
       span: ParseSpan, sourceSpan: AbsoluteSourceSpan, nameSpan: AbsoluteSourceSpan,
-      public receiver: AST, public name: string, public args: any[]) {
+      public receiver: AST, public name: string, public args: any[],
+      public argumentSpan: AbsoluteSourceSpan) {
     super(span, sourceSpan, nameSpan);
   }
   visit(visitor: AstVisitor, context: any = null): any {
@@ -361,10 +434,20 @@ export interface TemplateBindingIdentifier {
 }
 
 export interface AstVisitor {
+  /**
+   * The `visitUnary` method is declared as optional for backwards compatibility. In an upcoming
+   * major release, this method will be made required.
+   */
+  visitUnary?(ast: Unary, context: any): any;
   visitBinary(ast: Binary, context: any): any;
   visitChain(ast: Chain, context: any): any;
   visitConditional(ast: Conditional, context: any): any;
   visitFunctionCall(ast: FunctionCall, context: any): any;
+  /**
+   * The `visitThisReceiver` method is declared as optional for backwards compatibility.
+   * In an upcoming major release, this method will be made required.
+   */
+  visitThisReceiver?(ast: ThisReceiver, context: any): any;
   visitImplicitReceiver(ast: ImplicitReceiver, context: any): any;
   visitInterpolation(ast: Interpolation, context: any): any;
   visitKeyedRead(ast: KeyedRead, context: any): any;
@@ -381,6 +464,7 @@ export interface AstVisitor {
   visitQuote(ast: Quote, context: any): any;
   visitSafeMethodCall(ast: SafeMethodCall, context: any): any;
   visitSafePropertyRead(ast: SafePropertyRead, context: any): any;
+  visitSafeKeyedRead(ast: SafeKeyedRead, context: any): any;
   visitASTWithSource?(ast: ASTWithSource, context: any): any;
   /**
    * This function is optionally defined to allow classes that implement this
@@ -397,6 +481,9 @@ export class RecursiveAstVisitor implements AstVisitor {
     // Classes that extend RecursiveAstVisitor should override this function
     // to selectively visit the specified node.
     ast.visit(this, context);
+  }
+  visitUnary(ast: Unary, context: any): any {
+    this.visit(ast.expr, context);
   }
   visitBinary(ast: Binary, context: any): any {
     this.visit(ast.left, context);
@@ -420,16 +507,17 @@ export class RecursiveAstVisitor implements AstVisitor {
     }
     this.visitAll(ast.args, context);
   }
-  visitImplicitReceiver(ast: ImplicitReceiver, context: any): any {}
+  visitImplicitReceiver(ast: ThisReceiver, context: any): any {}
+  visitThisReceiver(ast: ThisReceiver, context: any): any {}
   visitInterpolation(ast: Interpolation, context: any): any {
     this.visitAll(ast.expressions, context);
   }
   visitKeyedRead(ast: KeyedRead, context: any): any {
-    this.visit(ast.obj, context);
+    this.visit(ast.receiver, context);
     this.visit(ast.key, context);
   }
   visitKeyedWrite(ast: KeyedWrite, context: any): any {
-    this.visit(ast.obj, context);
+    this.visit(ast.receiver, context);
     this.visit(ast.key, context);
     this.visit(ast.value, context);
   }
@@ -464,6 +552,10 @@ export class RecursiveAstVisitor implements AstVisitor {
     this.visit(ast.receiver, context);
     this.visitAll(ast.args, context);
   }
+  visitSafeKeyedRead(ast: SafeKeyedRead, context: any): any {
+    this.visit(ast.receiver, context);
+    this.visit(ast.key, context);
+  }
   visitQuote(ast: Quote, context: any): any {}
   // This is not part of the AstVisitor interface, just a helper method
   visitAll(asts: AST[], context: any): any {
@@ -475,6 +567,10 @@ export class RecursiveAstVisitor implements AstVisitor {
 
 export class AstTransformer implements AstVisitor {
   visitImplicitReceiver(ast: ImplicitReceiver, context: any): AST {
+    return ast;
+  }
+
+  visitThisReceiver(ast: ThisReceiver, context: any): AST {
     return ast;
   }
 
@@ -505,13 +601,13 @@ export class AstTransformer implements AstVisitor {
   visitMethodCall(ast: MethodCall, context: any): AST {
     return new MethodCall(
         ast.span, ast.sourceSpan, ast.nameSpan, ast.receiver.visit(this), ast.name,
-        this.visitAll(ast.args));
+        this.visitAll(ast.args), ast.argumentSpan);
   }
 
   visitSafeMethodCall(ast: SafeMethodCall, context: any): AST {
     return new SafeMethodCall(
         ast.span, ast.sourceSpan, ast.nameSpan, ast.receiver.visit(this), ast.name,
-        this.visitAll(ast.args));
+        this.visitAll(ast.args), ast.argumentSpan);
   }
 
   visitFunctionCall(ast: FunctionCall, context: any): AST {
@@ -525,6 +621,17 @@ export class AstTransformer implements AstVisitor {
 
   visitLiteralMap(ast: LiteralMap, context: any): AST {
     return new LiteralMap(ast.span, ast.sourceSpan, ast.keys, this.visitAll(ast.values));
+  }
+
+  visitUnary(ast: Unary, context: any): AST {
+    switch (ast.operator) {
+      case '+':
+        return Unary.createPlus(ast.span, ast.sourceSpan, ast.expr.visit(this));
+      case '-':
+        return Unary.createMinus(ast.span, ast.sourceSpan, ast.expr.visit(this));
+      default:
+        throw new Error(`Unknown unary operator ${ast.operator}`);
+    }
   }
 
   visitBinary(ast: Binary, context: any): AST {
@@ -553,12 +660,13 @@ export class AstTransformer implements AstVisitor {
   }
 
   visitKeyedRead(ast: KeyedRead, context: any): AST {
-    return new KeyedRead(ast.span, ast.sourceSpan, ast.obj.visit(this), ast.key.visit(this));
+    return new KeyedRead(ast.span, ast.sourceSpan, ast.receiver.visit(this), ast.key.visit(this));
   }
 
   visitKeyedWrite(ast: KeyedWrite, context: any): AST {
     return new KeyedWrite(
-        ast.span, ast.sourceSpan, ast.obj.visit(this), ast.key.visit(this), ast.value.visit(this));
+        ast.span, ast.sourceSpan, ast.receiver.visit(this), ast.key.visit(this),
+        ast.value.visit(this));
   }
 
   visitAll(asts: any[]): any[] {
@@ -577,12 +685,21 @@ export class AstTransformer implements AstVisitor {
     return new Quote(
         ast.span, ast.sourceSpan, ast.prefix, ast.uninterpretedExpression, ast.location);
   }
+
+  visitSafeKeyedRead(ast: SafeKeyedRead, context: any): AST {
+    return new SafeKeyedRead(
+        ast.span, ast.sourceSpan, ast.receiver.visit(this), ast.key.visit(this));
+  }
 }
 
 // A transformer that only creates new nodes if the transformer makes a change or
 // a change is made a child node.
 export class AstMemoryEfficientTransformer implements AstVisitor {
   visitImplicitReceiver(ast: ImplicitReceiver, context: any): AST {
+    return ast;
+  }
+
+  visitThisReceiver(ast: ThisReceiver, context: any): AST {
     return ast;
   }
 
@@ -626,7 +743,8 @@ export class AstMemoryEfficientTransformer implements AstVisitor {
     const receiver = ast.receiver.visit(this);
     const args = this.visitAll(ast.args);
     if (receiver !== ast.receiver || args !== ast.args) {
-      return new MethodCall(ast.span, ast.sourceSpan, ast.nameSpan, receiver, ast.name, args);
+      return new MethodCall(
+          ast.span, ast.sourceSpan, ast.nameSpan, receiver, ast.name, args, ast.argumentSpan);
     }
     return ast;
   }
@@ -635,7 +753,8 @@ export class AstMemoryEfficientTransformer implements AstVisitor {
     const receiver = ast.receiver.visit(this);
     const args = this.visitAll(ast.args);
     if (receiver !== ast.receiver || args !== ast.args) {
-      return new SafeMethodCall(ast.span, ast.sourceSpan, ast.nameSpan, receiver, ast.name, args);
+      return new SafeMethodCall(
+          ast.span, ast.sourceSpan, ast.nameSpan, receiver, ast.name, args, ast.argumentSpan);
     }
     return ast;
   }
@@ -661,6 +780,21 @@ export class AstMemoryEfficientTransformer implements AstVisitor {
     const values = this.visitAll(ast.values);
     if (values !== ast.values) {
       return new LiteralMap(ast.span, ast.sourceSpan, ast.keys, values);
+    }
+    return ast;
+  }
+
+  visitUnary(ast: Unary, context: any): AST {
+    const expr = ast.expr.visit(this);
+    if (expr !== ast.expr) {
+      switch (ast.operator) {
+        case '+':
+          return Unary.createPlus(ast.span, ast.sourceSpan, expr);
+        case '-':
+          return Unary.createMinus(ast.span, ast.sourceSpan, expr);
+        default:
+          throw new Error(`Unknown unary operator ${ast.operator}`);
+      }
     }
     return ast;
   }
@@ -710,19 +844,19 @@ export class AstMemoryEfficientTransformer implements AstVisitor {
   }
 
   visitKeyedRead(ast: KeyedRead, context: any): AST {
-    const obj = ast.obj.visit(this);
+    const obj = ast.receiver.visit(this);
     const key = ast.key.visit(this);
-    if (obj !== ast.obj || key !== ast.key) {
+    if (obj !== ast.receiver || key !== ast.key) {
       return new KeyedRead(ast.span, ast.sourceSpan, obj, key);
     }
     return ast;
   }
 
   visitKeyedWrite(ast: KeyedWrite, context: any): AST {
-    const obj = ast.obj.visit(this);
+    const obj = ast.receiver.visit(this);
     const key = ast.key.visit(this);
     const value = ast.value.visit(this);
-    if (obj !== ast.obj || key !== ast.key || value !== ast.value) {
+    if (obj !== ast.receiver || key !== ast.key || value !== ast.value) {
       return new KeyedWrite(ast.span, ast.sourceSpan, obj, key, value);
     }
     return ast;
@@ -751,6 +885,15 @@ export class AstMemoryEfficientTransformer implements AstVisitor {
   visitQuote(ast: Quote, context: any): AST {
     return ast;
   }
+
+  visitSafeKeyedRead(ast: SafeKeyedRead, context: any): AST {
+    const obj = ast.receiver.visit(this);
+    const key = ast.key.visit(this);
+    if (obj !== ast.receiver || key !== ast.key) {
+      return new SafeKeyedRead(ast.span, ast.sourceSpan, obj, key);
+    }
+    return ast;
+  }
 }
 
 // Bindings
@@ -761,7 +904,10 @@ export class ParsedProperty {
 
   constructor(
       public name: string, public expression: ASTWithSource, public type: ParsedPropertyType,
-      public sourceSpan: ParseSourceSpan, public valueSpan?: ParseSourceSpan) {
+      // TODO(FW-2095): `keySpan` should really be required but allows `undefined` so VE does
+      // not need to be updated. Make `keySpan` required when VE is removed.
+      public sourceSpan: ParseSourceSpan, readonly keySpan: ParseSourceSpan|undefined,
+      public valueSpan: ParseSourceSpan|undefined) {
     this.isLiteral = this.type === ParsedPropertyType.LITERAL_ATTR;
     this.isAnimation = this.type === ParsedPropertyType.ANIMATION;
   }
@@ -786,7 +932,8 @@ export class ParsedEvent {
   constructor(
       public name: string, public targetOrPhase: string, public type: ParsedEventType,
       public handler: ASTWithSource, public sourceSpan: ParseSourceSpan,
-      public handlerSpan: ParseSourceSpan) {}
+      // TODO(FW-2095): keySpan should be required but was made optional to avoid changing VE
+      public handlerSpan: ParseSourceSpan, readonly keySpan: ParseSourceSpan|undefined) {}
 }
 
 /**
@@ -816,5 +963,5 @@ export class BoundElementProperty {
   constructor(
       public name: string, public type: BindingType, public securityContext: SecurityContext,
       public value: ASTWithSource, public unit: string|null, public sourceSpan: ParseSourceSpan,
-      public valueSpan?: ParseSourceSpan) {}
+      readonly keySpan: ParseSourceSpan|undefined, public valueSpan: ParseSourceSpan|undefined) {}
 }

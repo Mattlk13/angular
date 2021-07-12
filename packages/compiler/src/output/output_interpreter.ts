@@ -197,6 +197,15 @@ class StatementInterpreter implements o.StatementVisitor, o.ExpressionVisitor {
       return fn.apply(null, args);
     }
   }
+  visitTaggedTemplateExpr(expr: o.TaggedTemplateExpr, ctx: _ExecutionContext): any {
+    const templateElements = expr.template.elements.map((e) => e.text);
+    Object.defineProperty(
+        templateElements, 'raw', {value: expr.template.elements.map((e) => e.rawText)});
+    const args = this.visitAllExpressions(expr.template.expressions, ctx);
+    args.unshift(templateElements);
+    const tag = expr.tag.visitExpression(this, ctx);
+    return tag.apply(null, args);
+  }
   visitReturnStmt(stmt: o.ReturnStatement, ctx: _ExecutionContext): any {
     return new ReturnValue(stmt.value.visitExpression(this, ctx));
   }
@@ -232,12 +241,6 @@ class StatementInterpreter implements o.StatementVisitor, o.ExpressionVisitor {
   }
   visitThrowStmt(stmt: o.ThrowStmt, ctx: _ExecutionContext): any {
     throw stmt.error.visitExpression(this, ctx);
-  }
-  visitCommentStmt(stmt: o.CommentStmt, context?: any): any {
-    return null;
-  }
-  visitJSDocCommentStmt(stmt: o.JSDocCommentStmt, context?: any): any {
-    return null;
   }
   visitInstantiateExpr(ast: o.InstantiateExpr, ctx: _ExecutionContext): any {
     const args = this.visitAllExpressions(ast.args, ctx);
@@ -282,6 +285,18 @@ class StatementInterpreter implements o.StatementVisitor, o.ExpressionVisitor {
     }
     return null;
   }
+  visitUnaryOperatorExpr(ast: o.UnaryOperatorExpr, ctx: _ExecutionContext): any {
+    const rhs = () => ast.expr.visitExpression(this, ctx);
+
+    switch (ast.operator) {
+      case o.UnaryOperator.Plus:
+        return +rhs();
+      case o.UnaryOperator.Minus:
+        return -rhs();
+      default:
+        throw new Error(`Unknown operator ${ast.operator}`);
+    }
+  }
   visitBinaryOperatorExpr(ast: o.BinaryOperatorExpr, ctx: _ExecutionContext): any {
     const lhs = () => ast.lhs.visitExpression(this, ctx);
     const rhs = () => ast.rhs.visitExpression(this, ctx);
@@ -317,6 +332,8 @@ class StatementInterpreter implements o.StatementVisitor, o.ExpressionVisitor {
         return lhs() > rhs();
       case o.BinaryOperator.BiggerEquals:
         return lhs() >= rhs();
+      case o.BinaryOperator.NullishCoalesce:
+        return lhs() ?? rhs();
       default:
         throw new Error(`Unknown operator ${ast.operator}`);
     }

@@ -9,11 +9,13 @@ import * as ts from 'typescript';
 
 import {absoluteFrom, AbsoluteFsPath, getFileSystem, NgtscCompilerHost} from '../../../src/ngtsc/file_system';
 import {TestFile} from '../../../src/ngtsc/file_system/testing';
+import {DtsProcessing} from '../../src/execution/tasks/api';
 import {BundleProgram, makeBundleProgram} from '../../src/packages/bundle_program';
 import {NgccEntryPointConfig} from '../../src/packages/configuration';
 import {EntryPoint, EntryPointFormat} from '../../src/packages/entry_point';
 import {EntryPointBundle} from '../../src/packages/entry_point_bundle';
 import {NgccSourcesCompilerHost} from '../../src/packages/ngcc_compiler_host';
+import {createModuleResolutionCache, EntryPointFileCache, SharedFileCache} from '../../src/packages/source_file_cache';
 
 export type TestConfig = Pick<NgccEntryPointConfig, 'generateDeepReexports'>;
 
@@ -54,6 +56,7 @@ export function makeTestEntryPointBundle(
     rootDirs: [absoluteFrom('/')],
     src,
     dts,
+    dtsProcessing: dtsRootNames ? DtsProcessing.Yes : DtsProcessing.No,
     isCore,
     isFlatCore,
     enableI18nLegacyMessageIdFormat
@@ -68,7 +71,10 @@ export function makeTestBundleProgram(
   const rootDir = fs.dirname(entryPointPath);
   const options: ts.CompilerOptions =
       {allowJs: true, maxNodeModuleJsDepth: Infinity, checkJs: false, rootDir, rootDirs: [rootDir]};
-  const host = new NgccSourcesCompilerHost(fs, options, entryPointPath);
+  const moduleResolutionCache = createModuleResolutionCache(fs);
+  const entryPointFileCache = new EntryPointFileCache(fs, new SharedFileCache(fs));
+  const host =
+      new NgccSourcesCompilerHost(fs, options, entryPointFileCache, moduleResolutionCache, rootDir);
   return makeBundleProgram(
       fs, isCore, rootDir, path, 'r3_symbols.js', options, host, additionalFiles);
 }

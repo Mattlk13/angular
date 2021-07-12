@@ -11,12 +11,14 @@ import {ɵɵCopyDefinitionFeature} from './features/copy_definition_feature';
 import {ɵɵInheritDefinitionFeature} from './features/inherit_definition_feature';
 import {ɵɵNgOnChangesFeature} from './features/ng_onchanges_feature';
 import {ɵɵProvidersFeature} from './features/providers_feature';
-import {ComponentDef, ComponentTemplate, ComponentType, DirectiveDef, DirectiveType, PipeDef, ɵɵComponentDefWithMeta, ɵɵDirectiveDefWithMeta, ɵɵFactoryDef, ɵɵPipeDefWithMeta} from './interfaces/definition';
-import {getComponent, getDirectives, getHostElement, getRenderedText} from './util/discovery_utils';
+import {ComponentDef, ComponentTemplate, ComponentType, DirectiveDef, DirectiveType, PipeDef} from './interfaces/definition';
+import {ɵɵComponentDeclaration, ɵɵDirectiveDeclaration, ɵɵFactoryDeclaration, ɵɵInjectorDeclaration, ɵɵNgModuleDeclaration, ɵɵPipeDeclaration} from './interfaces/public_definitions';
+import {ComponentDebugMetadata, DirectiveDebugMetadata, getComponent, getDirectiveMetadata, getDirectives, getHostElement, getRenderedText} from './util/discovery_utils';
 
+export {NgModuleType} from '../metadata/ng_module_def';
 export {ComponentFactory, ComponentFactoryResolver, ComponentRef, injectComponentFactoryResolver} from './component_ref';
-export {ɵɵgetFactoryOf, ɵɵgetInheritedFactory} from './di';
-export {getLocaleId, setLocaleId, ɵɵi18n, ɵɵi18nApply, ɵɵi18nAttributes, ɵɵi18nEnd, ɵɵi18nExp, ɵɵi18nPostprocess, ɵɵi18nStart,} from './i18n';
+export {ɵɵgetInheritedFactory} from './di';
+export {getLocaleId, setLocaleId} from './i18n/i18n_locale_id';
 // clang-format off
 export {
   detectChanges,
@@ -48,7 +50,6 @@ export {
   ɵɵclassMapInterpolateV,
 
   ɵɵclassProp,
-  ɵɵcomponentHostSyntheticListener,
 
   ɵɵdirectiveInject,
 
@@ -89,8 +90,6 @@ export {
 
   ɵɵreference,
 
-  // TODO: remove `select` once we've refactored all of the tests not to use it.
-  ɵɵselect,
   ɵɵstyleMap,
   ɵɵstyleMapInterpolate1,
   ɵɵstyleMapInterpolate2,
@@ -113,6 +112,9 @@ export {
   ɵɵstylePropInterpolate8,
   ɵɵstylePropInterpolateV,
 
+  ɵɵsyntheticHostListener,
+  ɵɵsyntheticHostProperty,
+
   ɵɵtemplate,
 
   ɵɵtext,
@@ -126,9 +128,8 @@ export {
   ɵɵtextInterpolate7,
   ɵɵtextInterpolate8,
   ɵɵtextInterpolateV,
-
-  ɵɵupdateSyntheticHostBinding,
 } from './instructions/all';
+export {ɵɵi18n, ɵɵi18nApply, ɵɵi18nAttributes, ɵɵi18nEnd, ɵɵi18nExp,ɵɵi18nPostprocess, ɵɵi18nStart} from './instructions/i18n';
 export {RenderFlags} from './interfaces/definition';
 export {
   AttributeMarker
@@ -137,7 +138,7 @@ export {CssSelectorList, ProjectionSlots} from './interfaces/projection';
 export {
   setClassMetadata,
 } from './metadata';
-export {NgModuleFactory, NgModuleRef, NgModuleType} from './ng_module_ref';
+export {NgModuleFactory, NgModuleRef} from './ng_module_ref';
 export {
   ɵɵpipe,
   ɵɵpipeBind1,
@@ -162,9 +163,6 @@ export {
   ɵɵcontentQuery,
   ɵɵloadQuery,
   ɵɵqueryRefresh,
-  ɵɵstaticContentQuery
-,
-  ɵɵstaticViewQuery,
   ɵɵviewQuery} from './query';
 export {
   ɵɵdisableBindings,
@@ -174,16 +172,19 @@ export {
 } from './state';
 export {NO_CHANGE} from './tokens';
 export { ɵɵresolveBody, ɵɵresolveDocument,ɵɵresolveWindow} from './util/misc_utils';
-export { ɵɵinjectPipeChangeDetectorRef,ɵɵtemplateRefExtractor} from './view_engine_compatibility_prebound';
+export { ɵɵtemplateRefExtractor} from './view_engine_compatibility_prebound';
 // clang-format on
 
 export {
+  ComponentDebugMetadata,
   ComponentDef,
   ComponentTemplate,
   ComponentType,
+  DirectiveDebugMetadata,
   DirectiveDef,
   DirectiveType,
   getComponent,
+  getDirectiveMetadata,
   getDirectives,
   getHostElement,
   getRenderedText,
@@ -191,17 +192,19 @@ export {
   PipeDef,
   renderComponent,
   whenRendered,
-  ɵɵComponentDefWithMeta,
+  ɵɵComponentDeclaration,
   ɵɵCopyDefinitionFeature,
   ɵɵdefineComponent,
   ɵɵdefineDirective,
   ɵɵdefineNgModule,
   ɵɵdefinePipe,
-  ɵɵDirectiveDefWithMeta,
-  ɵɵFactoryDef,
+  ɵɵDirectiveDeclaration,
+  ɵɵFactoryDeclaration,
   ɵɵInheritDefinitionFeature,
+  ɵɵInjectorDeclaration,
+  ɵɵNgModuleDeclaration,
   ɵɵNgOnChangesFeature,
-  ɵɵPipeDefWithMeta,
+  ɵɵPipeDeclaration,
   ɵɵProvidersFeature,
   ɵɵsetComponentScope,
   ɵɵsetNgModuleScope,

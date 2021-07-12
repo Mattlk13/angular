@@ -32,7 +32,8 @@ export class AutosquashMergeStrategy extends MergeStrategy {
    * @returns A pull request failure or null in case of success.
    */
   async merge(pullRequest: PullRequest): Promise<PullRequestFailure|null> {
-    const {prNumber, targetBranches, requiredBaseSha, needsCommitMessageFixup} = pullRequest;
+    const {prNumber, targetBranches, requiredBaseSha, needsCommitMessageFixup, githubTargetBranch} =
+        pullRequest;
     // In case a required base is specified for this pull request, check if the pull
     // request contains the given commit. If not, return a pull request failure. This
     // check is useful for enforcing that PRs are rebased on top of a given commit. e.g.
@@ -59,7 +60,7 @@ export class AutosquashMergeStrategy extends MergeStrategy {
     // is desired, we set the `GIT_SEQUENCE_EDITOR` environment variable to `true` so that
     // the rebase seems interactive to Git, while it's not interactive to the user.
     // See: https://github.com/git/git/commit/891d4a0313edc03f7e2ecb96edec5d30dc182294.
-    const branchBeforeRebase = this.git.getCurrentBranch();
+    const branchOrRevisionBeforeRebase = this.git.getCurrentBranchOrRevision();
     const rebaseEnv =
         needsCommitMessageFixup ? undefined : {...process.env, GIT_SEQUENCE_EDITOR: 'true'};
     this.git.run(
@@ -69,9 +70,9 @@ export class AutosquashMergeStrategy extends MergeStrategy {
     // Update pull requests commits to reference the pull request. This matches what
     // Github does when pull requests are merged through the Web UI. The motivation is
     // that it should be easy to determine which pull request contained a given commit.
-    // **Note**: The filter-branch command relies on the working tree, so we want to make
-    // sure that we are on the initial branch where the merge script has been run.
-    this.git.run(['checkout', '-f', branchBeforeRebase]);
+    // Note: The filter-branch command relies on the working tree, so we want to make sure
+    // that we are on the initial branch or revision where the merge script has been invoked.
+    this.git.run(['checkout', '-f', branchOrRevisionBeforeRebase]);
     this.git.run(
         ['filter-branch', '-f', '--msg-filter', `${MSG_FILTER_SCRIPT} ${prNumber}`, revisionRange]);
 
@@ -83,6 +84,30 @@ export class AutosquashMergeStrategy extends MergeStrategy {
     }
 
     this.pushTargetBranchesUpstream(targetBranches);
+
+    // For PRs which do not target the `master` branch on Github, Github does not automatically
+    // close the PR when its commit is pushed into the repository.  To ensure these PRs are
+    // correctly marked as closed, we must detect this situation and close the PR via the API after
+    // the upstream pushes are completed.
+    if (githubTargetBranch !== 'master') {
+      /** The local branch name of the github targeted branch. */
+      const localBranch = this.getLocalTargetBranchName(githubTargetBranch);
+      /** The SHA of the commit pushed to github which represents closing the PR. */
+      const sha = this.git.run(['rev-parse', localBranch]).stdout.trim();
+      // Create a comment saying the PR was closed by the SHA.
+      await this.git.github.issues.createComment({
+        ...this.git.remoteParams,
+        issue_number: pullRequest.prNumber,
+        body: `Closed by commit ${sha}`
+      });
+      // Actually close the PR.
+      await this.git.github.pulls.update({
+        ...this.git.remoteParams,
+        pull_number: pullRequest.prNumber,
+        state: 'closed',
+      });
+    }
+
     return null;
   }
 }

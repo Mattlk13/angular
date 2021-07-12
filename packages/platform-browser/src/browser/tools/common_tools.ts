@@ -6,7 +6,6 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {ɵgetDOM as getDOM} from '@angular/common';
 import {ApplicationRef, ComponentRef} from '@angular/core';
 import {window} from './browser';
 
@@ -45,18 +44,18 @@ export class AngularProfiler {
   timeChangeDetection(config: any): ChangeDetectionPerfRecord {
     const record = config && config['record'];
     const profileName = 'Change Detection';
-    // Profiler is not available in Android browsers, nor in IE 9 without dev tools opened
+    // Profiler is not available in Android browsers without dev tools opened
     const isProfilerAvailable = window.console.profile != null;
     if (record && isProfilerAvailable) {
       window.console.profile(profileName);
     }
-    const start = getDOM().performanceNow();
+    const start = performanceNow();
     let numTicks = 0;
-    while (numTicks < 5 || (getDOM().performanceNow() - start) < 500) {
+    while (numTicks < 5 || (performanceNow() - start) < 500) {
       this.appRef.tick();
       numTicks++;
     }
-    const end = getDOM().performanceNow();
+    const end = performanceNow();
     if (record && isProfilerAvailable) {
       window.console.profileEnd(profileName);
     }
@@ -66,4 +65,9 @@ export class AngularProfiler {
 
     return new ChangeDetectionPerfRecord(msPerTick, numTicks);
   }
+}
+
+function performanceNow() {
+  return window.performance && window.performance.now ? window.performance.now() :
+                                                        new Date().getTime();
 }

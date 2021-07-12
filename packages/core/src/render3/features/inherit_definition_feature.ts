@@ -7,8 +7,8 @@
  */
 
 import {Type, Writable} from '../../interface/type';
+import {EMPTY_ARRAY, EMPTY_OBJ} from '../../util/empty';
 import {fillProperties} from '../../util/property';
-import {EMPTY_ARRAY, EMPTY_OBJ} from '../empty';
 import {ComponentDef, ContentQueriesFunction, DirectiveDef, DirectiveDefFeature, HostBindingsFunction, RenderFlags, ViewQueriesFunction} from '../interfaces/definition';
 import {TAttributes} from '../interfaces/node';
 import {isComponentDef} from '../interfaces/type_checks';
@@ -78,17 +78,6 @@ export function ɵɵInheritDefinitionFeature(definition: DirectiveDef<any>|Compo
           const defData = (definition as ComponentDef<any>).data;
           defData.animation = (defData.animation || []).concat(superDef.data.animation);
         }
-
-        // Inherit hooks
-        // Assume super class inheritance feature has already run.
-        writeableDef.afterContentChecked =
-            writeableDef.afterContentChecked || superDef.afterContentChecked;
-        writeableDef.afterContentInit = definition.afterContentInit || superDef.afterContentInit;
-        writeableDef.afterViewChecked = definition.afterViewChecked || superDef.afterViewChecked;
-        writeableDef.afterViewInit = definition.afterViewInit || superDef.afterViewInit;
-        writeableDef.doCheck = definition.doCheck || superDef.doCheck;
-        writeableDef.onDestroy = definition.onDestroy || superDef.onDestroy;
-        writeableDef.onInit = definition.onInit || superDef.onInit;
       }
 
       // Run parent features

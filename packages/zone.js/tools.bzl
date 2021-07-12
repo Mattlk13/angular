@@ -3,11 +3,7 @@
 load("//tools:defaults.bzl", "rollup_bundle")
 
 def zone_rollup_bundle(module_name, entry_point, rollup_config):
-    config_file = ""
-    if rollup_config["rollup"] == "global-es2015":
-        config_file = "//packages/zone.js:rollup-es5_global-es2015.config.js"
-    if rollup_config["rollup"] == "es5":
-        config_file = "//packages/zone.js:rollup-es5.config.js"
+    config_file = "//packages/zone.js:rollup.config.js"
     rollup_bundle(
         name = module_name + "-rollup",
         config_file = config_file,
@@ -31,7 +27,7 @@ def copy_dist(module_name, module_format, output_module_name, suffix, umd):
     native.genrule(
         name = module_name + "." + suffix_output + "dist",
         srcs = [
-            "//packages/zone.js:" + module_name + "-rollup." + suffix_output + module_format + "umd.js",
+            "//packages/zone.js:" + module_name + "-rollup." + suffix_output + module_format,
         ],
         outs = [
             output_module_name + "." + umd_output + suffix_output + "js",
@@ -69,9 +65,9 @@ def generate_rollup_bundle(bundles):
             )
 
 def generate_dist(bundles, output_format, umd):
-    module_format = ""
+    module_format = "esm.js"
     if output_format == "es5":
-        module_format = "es5"
+        module_format = "es5umd.js"
     for b in bundles:
         module_name = b[0]
         copy_dist(

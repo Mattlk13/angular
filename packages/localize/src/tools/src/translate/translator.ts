@@ -5,7 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import {AbsoluteFsPath, FileSystem, PathSegment} from '@angular/compiler-cli/src/ngtsc/file_system';
+import {AbsoluteFsPath, PathSegment, ReadonlyFileSystem} from '@angular/compiler-cli/src/ngtsc/file_system';
 import {ɵMessageId, ɵParsedTranslation} from '@angular/localize';
 
 import {Diagnostics} from '../diagnostics';
@@ -35,7 +35,7 @@ export interface TranslationHandler {
    * @param relativeFilePath A relative path from the sourceRoot to the resource file to handle.
    * @param contents The contents of the file to handle.
    */
-  canTranslate(relativeFilePath: PathSegment, contents: Buffer): boolean;
+  canTranslate(relativeFilePath: PathSegment|AbsoluteFsPath, contents: Uint8Array): boolean;
 
   /**
    * Translate the file at `relativeFilePath` containing `contents`, using the given `translations`,
@@ -53,9 +53,9 @@ export interface TranslationHandler {
    * stripped out.
    */
   translate(
-      diagnostics: Diagnostics, sourceRoot: AbsoluteFsPath, relativeFilePath: PathSegment,
-      contents: Buffer, outputPathFn: OutputPathFn, translations: TranslationBundle[],
-      sourceLocale?: string): void;
+      diagnostics: Diagnostics, sourceRoot: AbsoluteFsPath,
+      relativeFilePath: PathSegment|AbsoluteFsPath, contents: Uint8Array,
+      outputPathFn: OutputPathFn, translations: TranslationBundle[], sourceLocale?: string): void;
 }
 
 /**
@@ -64,7 +64,7 @@ export interface TranslationHandler {
  */
 export class Translator {
   constructor(
-      private fs: FileSystem, private resourceHandlers: TranslationHandler[],
+      private fs: ReadonlyFileSystem, private resourceHandlers: TranslationHandler[],
       private diagnostics: Diagnostics) {}
 
   translateFiles(

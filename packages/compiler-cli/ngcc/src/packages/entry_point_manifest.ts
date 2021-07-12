@@ -8,12 +8,12 @@
 import {createHash} from 'crypto';
 
 import {AbsoluteFsPath, FileSystem, PathSegment} from '../../../src/ngtsc/file_system';
+import {Logger} from '../../../src/ngtsc/logging';
 import {EntryPointWithDependencies} from '../dependencies/dependency_host';
-import {Logger} from '../logging/logger';
 
 import {NGCC_VERSION} from './build_marker';
 import {NgccConfiguration} from './configuration';
-import {getEntryPointInfo, isEntryPoint} from './entry_point';
+import {getEntryPointInfo, isEntryPoint, PackageJsonFormatProperties} from './entry_point';
 
 /**
  * Manages reading and writing a manifest file that contains a list of all the entry-points that
@@ -159,7 +159,7 @@ export class EntryPointManifest {
       const lockFilePath = this.fs.resolve(directory, lockFileName);
       if (this.fs.exists(lockFilePath)) {
         const lockFileContents = this.fs.readFile(lockFilePath);
-        return createHash('md5').update(lockFileContents).digest('hex');
+        return createHash(this.config.hashAlgorithm).update(lockFileContents).digest('hex');
       }
     }
     return null;
@@ -197,3 +197,9 @@ export interface EntryPointManifestFile {
   lockFileHash: string;
   entryPointPaths: EntryPointPaths[];
 }
+
+
+/** The JSON format of the entrypoint properties. */
+export type NewEntryPointPropertiesMap = {
+  [Property in PackageJsonFormatProperties as `${Property}_ivy_ngcc`]?: string;
+};

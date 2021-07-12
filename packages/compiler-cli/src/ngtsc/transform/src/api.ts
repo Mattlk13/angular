@@ -10,10 +10,27 @@ import {ConstantPool, Expression, Statement, Type} from '@angular/compiler';
 import * as ts from 'typescript';
 
 import {Reexport} from '../../imports';
+import {SemanticSymbol} from '../../incremental/semantic_graph';
 import {IndexingContext} from '../../indexer';
 import {ClassDeclaration, Decorator} from '../../reflection';
 import {ImportManager} from '../../translator';
-import {TypeCheckContext} from '../../typecheck';
+import {TypeCheckContext} from '../../typecheck/api';
+import {Xi18nContext} from '../../xi18n';
+
+/**
+ * Specifies the compilation mode that is used for the compilation.
+ */
+export enum CompilationMode {
+  /**
+   * Generates fully AOT compiled code using Ivy instructions.
+   */
+  FULL,
+
+  /**
+   * Generates code using a stable, but intermediate format suitable to be published to NPM.
+   */
+  PARTIAL,
+}
 
 export enum HandlerPrecedence {
   /**
@@ -72,7 +89,7 @@ export enum HandlerFlags {
  * @param `A` The type of analysis metadata produced by `analyze`.
  * @param `R` The type of resolution metadata produced by `resolve`.
  */
-export interface DecoratorHandler<D, A, R> {
+export interface DecoratorHandler<D, A, S extends SemanticSymbol|null, R> {
   readonly name: string;
 
   /**
@@ -114,6 +131,26 @@ export interface DecoratorHandler<D, A, R> {
       AnalysisOutput<A>;
 
   /**
+   * React to a change in a resource file by updating the `analysis` or `resolution`, under the
+   * assumption that nothing in the TypeScript code has changed.
+   */
+  updateResources?(node: ClassDeclaration, analysis: A, resolution: R): void;
+
+  /**
+   * Produces a `SemanticSymbol` that represents the class, which is registered into the semantic
+   * dependency graph. The symbol is used in incremental compilations to let the compiler determine
+   * how a change to the class affects prior emit results. See the `incremental` target's README for
+   * details on how this works.
+   *
+   * The symbol is passed in to `resolve`, where it can be extended with references into other parts
+   * of the compilation as needed.
+   *
+   * Only primary handlers are allowed to have symbols; handlers with `precedence` other than
+   * `HandlerPrecedence.PRIMARY` must return a `null` symbol.
+   */
+  symbol(node: ClassDeclaration, analysis: Readonly<A>): S;
+
+  /**
    * Post-process the analysis of a decorator/class combination and record any necessary information
    * in the larger compilation.
    *
@@ -138,7 +175,13 @@ export interface DecoratorHandler<D, A, R> {
    * `DecoratorHandler` a chance to leverage information from the whole compilation unit to enhance
    * the `analysis` before the emit phase.
    */
-  resolve?(node: ClassDeclaration, analysis: Readonly<A>): ResolveResult<R>;
+  resolve?(node: ClassDeclaration, analysis: Readonly<A>, symbol: S): ResolveResult<R>;
+
+  /**
+   * Extract i18n messages into the `Xi18nContext`, which is useful for generating various formats
+   * of message file outputs.
+   */
+  xi18n?(bundle: Xi18nContext, node: ClassDeclaration, analysis: Readonly<A>): void;
 
   typeCheck?
       (ctx: TypeCheckContext, node: ClassDeclaration, analysis: Readonly<A>,
@@ -147,10 +190,25 @@ export interface DecoratorHandler<D, A, R> {
   /**
    * Generate a description of the field which should be added to the class, including any
    * initialization code to be generated.
+   *
+   * If the compilation mode is configured as partial, and an implementation of `compilePartial` is
+   * provided, then this method is not called.
    */
-  compile(
+  compileFull(
       node: ClassDeclaration, analysis: Readonly<A>, resolution: Readonly<R>,
       constantPool: ConstantPool): CompileResult|CompileResult[];
+
+  /**
+   * Generates code for the decorator using a stable, but intermediate format suitable to be
+   * published to NPM. This code is meant to be processed by the linker to achieve the final AOT
+   * compiled code.
+   *
+   * If present, this method is used if the compilation mode is configured as partial, otherwise
+   * `compileFull` is.
+   */
+  compilePartial?
+      (node: ClassDeclaration, analysis: Readonly<A>, resolution: Readonly<R>): CompileResult
+      |CompileResult[];
 }
 
 /**

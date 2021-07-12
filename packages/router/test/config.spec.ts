@@ -6,8 +6,8 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {validateConfig} from '../src/config';
 import {PRIMARY_OUTLET} from '../src/shared';
+import {validateConfig} from '../src/utils/config';
 
 describe('config', () => {
   describe('validateConfig', () => {
@@ -96,6 +96,15 @@ describe('config', () => {
       })
           .toThrowError(
               `Invalid configuration of route 'a': redirectTo and component cannot be used together`);
+    });
+
+    it('should throw when component and redirectTo are used together', () => {
+      expect(() => {
+        validateConfig([{path: 'a', redirectTo: 'b', canActivate: []}]);
+      })
+          .toThrowError(
+              `Invalid configuration of route 'a': redirectTo and canActivate cannot be used together. ` +
+              `Redirects happen before activation so canActivate will never be executed.`);
     });
 
     it('should throw when path and matcher are used together', () => {

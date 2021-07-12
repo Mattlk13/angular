@@ -6,24 +6,32 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import {Element, Node, ParseErrorLevel, visitAll} from '@angular/compiler';
-import {ɵParsedTranslation} from '@angular/localize';
 
 import {Diagnostics} from '../../../diagnostics';
 import {BaseVisitor} from '../base_visitor';
-import {MessageSerializer} from '../message_serialization/message_serializer';
-import {TargetMessageRenderer} from '../message_serialization/target_message_renderer';
 
-import {ParsedTranslationBundle, TranslationParser} from './translation_parser';
-import {addParseDiagnostic, addParseError, canParseXml, getAttribute, isNamedElement, parseInnerRange, XmlTranslationParserHint} from './translation_utils';
+import {serializeTranslationMessage} from './serialize_translation_message';
+import {ParseAnalysis, ParsedTranslationBundle, TranslationParser} from './translation_parser';
+import {addErrorsToBundle, addParseDiagnostic, addParseError, canParseXml, getAttribute, isNamedElement, XmlTranslationParserHint} from './translation_utils';
 
 /**
  * A translation parser that can load translations from XLIFF 2 files.
  *
- * http://docs.oasis-open.org/xliff/xliff-core/v2.0/os/xliff-core-v2.0-os.html
+ * https://docs.oasis-open.org/xliff/xliff-core/v2.0/os/xliff-core-v2.0-os.html
  *
+ * @see Xliff2TranslationSerializer
+ * @publicApi used by CLI
  */
 export class Xliff2TranslationParser implements TranslationParser<XmlTranslationParserHint> {
+  /**
+   * @deprecated
+   */
   canParse(filePath: string, contents: string): XmlTranslationParserHint|false {
+    const result = this.analyze(filePath, contents);
+    return result.canParse && result.hint;
+  }
+
+  analyze(filePath: string, contents: string): ParseAnalysis<XmlTranslationParserHint> {
     return canParseXml(filePath, contents, 'xliff', {version: '2.0'});
   }
 
@@ -124,35 +132,37 @@ class Xliff2TranslationVisitor extends BaseVisitor {
       return;
     }
 
-    const targetMessage = element.children.find(isNamedElement('target'));
+    let targetMessage = element.children.find(isNamedElement('target'));
     if (targetMessage === undefined) {
+      // Warn if there is no `<target>` child element
       addParseDiagnostic(
-          bundle.diagnostics, element.sourceSpan, 'Missing required <target> element',
-          ParseErrorLevel.ERROR);
-      return;
-    }
+          bundle.diagnostics, element.sourceSpan, 'Missing <target> element',
+          ParseErrorLevel.WARNING);
 
-    try {
-      bundle.translations[unit] = serializeTargetMessage(targetMessage);
-    } catch (e) {
-      // Capture any errors from serialize the target message
-      if (e.span && e.msg && e.level) {
-        addParseDiagnostic(bundle.diagnostics, e.span, e.msg, e.level);
-      } else {
-        throw e;
+      // Fallback to the `<source>` element if available.
+      targetMessage = element.children.find(isNamedElement('source'));
+      if (targetMessage === undefined) {
+        // Error if there is neither `<target>` nor `<source>`.
+        addParseDiagnostic(
+            bundle.diagnostics, element.sourceSpan,
+            'Missing required element: one of <target> or <source> is required',
+            ParseErrorLevel.ERROR);
+        return;
       }
     }
-  }
-}
 
-function serializeTargetMessage(source: Element): ɵParsedTranslation {
-  const serializer = new MessageSerializer(new TargetMessageRenderer(), {
-    inlineElements: ['cp', 'sc', 'ec', 'mrk', 'sm', 'em'],
-    placeholder: {elementName: 'ph', nameAttribute: 'equiv', bodyAttribute: 'disp'},
-    placeholderContainer:
-        {elementName: 'pc', startAttribute: 'equivStart', endAttribute: 'equivEnd'}
-  });
-  return serializer.serialize(parseInnerRange(source));
+    const {translation, parseErrors, serializeErrors} = serializeTranslationMessage(targetMessage, {
+      inlineElements: ['cp', 'sc', 'ec', 'mrk', 'sm', 'em'],
+      placeholder: {elementName: 'ph', nameAttribute: 'equiv', bodyAttribute: 'disp'},
+      placeholderContainer:
+          {elementName: 'pc', startAttribute: 'equivStart', endAttribute: 'equivEnd'}
+    });
+    if (translation !== null) {
+      bundle.translations[unit] = translation;
+    }
+    addErrorsToBundle(bundle, parseErrors);
+    addErrorsToBundle(bundle, serializeErrors);
+  }
 }
 
 function isFileElement(node: Node): node is Element {

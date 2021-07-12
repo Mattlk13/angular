@@ -1,8 +1,8 @@
 // Snapshot version
 // #docregion
-import { Component, OnInit }      from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
-import { Observable }             from 'rxjs';
+import { Observable } from 'rxjs';
 
 import { HeroService } from '../hero.service';
 import { Hero } from '../hero';
@@ -13,7 +13,7 @@ import { Hero } from '../hero';
   styleUrls: ['./hero-detail.component.css']
 })
 export class HeroDetailComponent implements OnInit  {
-  hero$: Observable<Hero>;
+  hero$!: Observable<Hero>;
 
   constructor(
     private route: ActivatedRoute,
@@ -23,7 +23,7 @@ export class HeroDetailComponent implements OnInit  {
 
   // #docregion snapshot
   ngOnInit() {
-    let id = this.route.snapshot.paramMap.get('id');
+    const id = this.route.snapshot.paramMap.get('id')!;
 
     this.hero$ = this.service.getHero(id);
   }

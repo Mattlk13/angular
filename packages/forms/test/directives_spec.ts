@@ -8,10 +8,10 @@
 
 import {SimpleChange} from '@angular/core';
 import {fakeAsync, flushMicrotasks, tick} from '@angular/core/testing';
-import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testing_internal';
 import {AbstractControl, CheckboxControlValueAccessor, ControlValueAccessor, DefaultValueAccessor, FormArray, FormArrayName, FormControl, FormControlDirective, FormControlName, FormGroup, FormGroupDirective, FormGroupName, NgControl, NgForm, NgModel, NgModelGroup, SelectControlValueAccessor, SelectMultipleControlValueAccessor, ValidationErrors, Validator, Validators} from '@angular/forms';
-import {composeValidators, selectValueAccessor} from '@angular/forms/src/directives/shared';
-import {SpyNgControl, SpyValueAccessor} from './spies';
+import {selectValueAccessor} from '@angular/forms/src/directives/shared';
+import {composeValidators} from '@angular/forms/src/validators';
+import {asyncValidator} from './util';
 
 class DummyControlValueAccessor implements ControlValueAccessor {
   writtenValue: any;
@@ -30,24 +30,6 @@ class CustomValidatorDirective implements Validator {
   }
 }
 
-function asyncValidator(expected: any, timeout = 0) {
-  return (c: AbstractControl): any => {
-    let resolve: (result: any) => void = undefined!;
-    const promise = new Promise(res => {
-      resolve = res;
-    });
-    const res = c.value != expected ? {'async': true} : null;
-    if (timeout == 0) {
-      resolve(res);
-    } else {
-      setTimeout(() => {
-        resolve(res);
-      }, timeout);
-    }
-    return promise;
-  };
-}
-
 {
   describe('Form Directives', () => {
     let defaultAccessor: DefaultValueAccessor;
@@ -61,7 +43,7 @@ function asyncValidator(expected: any, timeout = 0) {
         let dir: NgControl;
 
         beforeEach(() => {
-          dir = <any>new SpyNgControl();
+          dir = {path: []} as any;
         });
 
         it('should throw when given an empty array', () => {
@@ -106,7 +88,7 @@ function asyncValidator(expected: any, timeout = 0) {
         });
 
         it('should return custom accessor when provided', () => {
-          const customAccessor: ControlValueAccessor = new SpyValueAccessor() as any;
+          const customAccessor: ControlValueAccessor = {} as any;
           const checkboxAccessor = new CheckboxControlValueAccessor(null!, null!);
           expect(selectValueAccessor(dir, <any>[
             defaultAccessor, customAccessor, checkboxAccessor
@@ -114,7 +96,7 @@ function asyncValidator(expected: any, timeout = 0) {
         });
 
         it('should return custom accessor when provided with select multiple', () => {
-          const customAccessor: ControlValueAccessor = new SpyValueAccessor() as any;
+          const customAccessor: ControlValueAccessor = {} as any;
           const selectMultipleAccessor = new SelectMultipleControlValueAccessor(null!, null!);
           expect(selectValueAccessor(dir, <any>[
             defaultAccessor, customAccessor, selectMultipleAccessor
@@ -122,7 +104,7 @@ function asyncValidator(expected: any, timeout = 0) {
         });
 
         it('should throw when more than one custom accessor is provided', () => {
-          const customAccessor: ControlValueAccessor = <any>new SpyValueAccessor();
+          const customAccessor: ControlValueAccessor = {} as any;
           expect(() => selectValueAccessor(dir, [customAccessor, customAccessor])).toThrowError();
         });
       });
@@ -248,8 +230,9 @@ function asyncValidator(expected: any, timeout = 0) {
       });
 
       describe('addFormGroup', () => {
-        const matchingPasswordsValidator = (g: FormGroup) => {
-          if (g.controls['password'].value != g.controls['passwordConfirm'].value) {
+        const matchingPasswordsValidator = (g: AbstractControl) => {
+          const controls = (g as FormGroup).controls;
+          if (controls['password'].value != controls['passwordConfirm'].value) {
             return {'differentPasswords': true};
           } else {
             return null;

@@ -18,6 +18,8 @@ export class EventHandlerVars {
 export interface LocalResolver {
   getLocal(name: string): o.Expression|null;
   notifyImplicitReceiverUse(): void;
+  globals?: Set<string>;
+  maybeRestoreView(): void;
 }
 
 export class ConvertActionBindingResult {
@@ -72,10 +74,10 @@ export type InterpolationFunction = (args: o.Expression[]) => o.Expression;
 export function convertActionBinding(
     localResolver: LocalResolver|null, implicitReceiver: o.Expression, action: cdAst.AST,
     bindingId: string, interpolationFunction?: InterpolationFunction,
-    baseSourceSpan?: ParseSourceSpan,
-    implicitReceiverAccesses?: Set<string>): ConvertActionBindingResult {
+    baseSourceSpan?: ParseSourceSpan, implicitReceiverAccesses?: Set<string>,
+    globals?: Set<string>): ConvertActionBindingResult {
   if (!localResolver) {
-    localResolver = new DefaultLocalResolver();
+    localResolver = new DefaultLocalResolver(globals);
   }
   const actionWithoutBuiltins = convertPropertyBindingBuiltins(
       {
@@ -154,6 +156,11 @@ export enum BindingForm {
   // Try to generate a simple binding (no temporaries or statements)
   // otherwise generate a general binding
   TrySimple,
+
+  // Inlines assignment of temporaries into the generated expression. The result may still
+  // have statements attached for declarations of temporary variables.
+  // This is the only relevant form for Ivy, the other forms are only used in ViewEngine.
+  Expression,
 }
 
 /**
@@ -168,7 +175,6 @@ export function convertPropertyBinding(
   if (!localResolver) {
     localResolver = new DefaultLocalResolver();
   }
-  const currValExpr = createCurrValueExpr(bindingId);
   const visitor =
       new _AstToIrVisitor(localResolver, implicitReceiver, bindingId, interpolationFunction);
   const outputExpr: o.Expression = expressionWithoutBuiltins.visit(visitor, _Mode.Expression);
@@ -180,8 +186,11 @@ export function convertPropertyBinding(
 
   if (visitor.temporaryCount === 0 && form == BindingForm.TrySimple) {
     return new ConvertPropertyBindingResult([], outputExpr);
+  } else if (form === BindingForm.Expression) {
+    return new ConvertPropertyBindingResult(stmts, outputExpr);
   }
 
+  const currValExpr = createCurrValueExpr(bindingId);
   stmts.push(currValExpr.set(outputExpr).toDeclStmt(o.DYNAMIC_TYPE, [o.StmtModifier.Final]));
   return new ConvertPropertyBindingResult(stmts, currValExpr);
 }
@@ -251,8 +260,8 @@ function temporaryName(bindingId: string, temporaryNumber: number): string {
   return `tmp_${bindingId}_${temporaryNumber}`;
 }
 
-export function temporaryDeclaration(bindingId: string, temporaryNumber: number): o.Statement {
-  return new o.DeclareVarStmt(temporaryName(bindingId, temporaryNumber), o.NULL_EXPR);
+function temporaryDeclaration(bindingId: string, temporaryNumber: number): o.Statement {
+  return new o.DeclareVarStmt(temporaryName(bindingId, temporaryNumber));
 }
 
 function prependTemporaryDecls(
@@ -323,6 +332,26 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       private bindingId: string, private interpolationFunction: InterpolationFunction|undefined,
       private baseSourceSpan?: ParseSourceSpan, private implicitReceiverAccesses?: Set<string>) {}
 
+  visitUnary(ast: cdAst.Unary, mode: _Mode): any {
+    let op: o.UnaryOperator;
+    switch (ast.operator) {
+      case '+':
+        op = o.UnaryOperator.Plus;
+        break;
+      case '-':
+        op = o.UnaryOperator.Minus;
+        break;
+      default:
+        throw new Error(`Unsupported operator ${ast.operator}`);
+    }
+
+    return convertToStatementIfNeeded(
+        mode,
+        new o.UnaryOperatorExpr(
+            op, this._visit(ast.expr, _Mode.Expression), undefined,
+            this.convertSourceSpan(ast.span)));
+  }
+
   visitBinary(ast: cdAst.Binary, mode: _Mode): any {
     let op: o.BinaryOperator;
     switch (ast.operation) {
@@ -371,6 +400,8 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       case '>=':
         op = o.BinaryOperator.BiggerEquals;
         break;
+      case '??':
+        return this.convertNullishCoalesce(ast, mode);
       default:
         throw new Error(`Unsupported operation ${ast.operation}`);
     }
@@ -419,6 +450,10 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
     return this._implicitReceiver;
   }
 
+  visitThisReceiver(ast: cdAst.ThisReceiver, mode: _Mode): any {
+    return this.visitImplicitReceiver(ast, mode);
+  }
+
   visitInterpolation(ast: cdAst.Interpolation, mode: _Mode): any {
     ensureExpressionMode(mode, ast);
     const args = [o.literal(ast.expressions.length)];
@@ -444,14 +479,20 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       return this.convertSafeAccess(ast, leftMostSafe, mode);
     } else {
       return convertToStatementIfNeeded(
-          mode, this._visit(ast.obj, _Mode.Expression).key(this._visit(ast.key, _Mode.Expression)));
+          mode,
+          this._visit(ast.receiver, _Mode.Expression).key(this._visit(ast.key, _Mode.Expression)));
     }
   }
 
   visitKeyedWrite(ast: cdAst.KeyedWrite, mode: _Mode): any {
-    const obj: o.Expression = this._visit(ast.obj, _Mode.Expression);
+    const obj: o.Expression = this._visit(ast.receiver, _Mode.Expression);
     const key: o.Expression = this._visit(ast.key, _Mode.Expression);
     const value: o.Expression = this._visit(ast.value, _Mode.Expression);
+
+    if (obj === this._implicitReceiver) {
+      this._localResolver.maybeRestoreView();
+    }
+
     return convertToStatementIfNeeded(mode, obj.key(key).set(value));
   }
 
@@ -474,12 +515,17 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
         mode, o.literal(ast.value, type, this.convertSourceSpan(ast.span)));
   }
 
-  private _getLocal(name: string): o.Expression|null {
+  private _getLocal(name: string, receiver: cdAst.AST): o.Expression|null {
+    if (this._localResolver.globals?.has(name) && receiver instanceof cdAst.ThisReceiver) {
+      return null;
+    }
+
     return this._localResolver.getLocal(name);
   }
 
   visitMethodCall(ast: cdAst.MethodCall, mode: _Mode): any {
-    if (ast.receiver instanceof cdAst.ImplicitReceiver && ast.name == '$any') {
+    if (ast.receiver instanceof cdAst.ImplicitReceiver &&
+        !(ast.receiver instanceof cdAst.ThisReceiver) && ast.name === '$any') {
       const args = this.visitAll(ast.args, _Mode.Expression) as any[];
       if (args.length != 1) {
         throw new Error(
@@ -497,14 +543,14 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       let result: any = null;
       const receiver = this._visit(ast.receiver, _Mode.Expression);
       if (receiver === this._implicitReceiver) {
-        const varExpr = this._getLocal(ast.name);
+        const varExpr = this._getLocal(ast.name, ast.receiver);
         if (varExpr) {
           // Restore the previous "usesImplicitReceiver" state since the implicit
           // receiver has been replaced with a resolved local expression.
           this.usesImplicitReceiver = prevUsesImplicitReceiver;
           result = varExpr.callFn(args);
+          this.addImplicitReceiverAccess(ast.name);
         }
-        this.addImplicitReceiverAccess(ast.name);
       }
       if (result == null) {
         result = receiver.callMethod(ast.name, args, this.convertSourceSpan(ast.span));
@@ -531,13 +577,13 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       const prevUsesImplicitReceiver = this.usesImplicitReceiver;
       const receiver = this._visit(ast.receiver, _Mode.Expression);
       if (receiver === this._implicitReceiver) {
-        result = this._getLocal(ast.name);
+        result = this._getLocal(ast.name, ast.receiver);
         if (result) {
           // Restore the previous "usesImplicitReceiver" state since the implicit
           // receiver has been replaced with a resolved local expression.
           this.usesImplicitReceiver = prevUsesImplicitReceiver;
+          this.addImplicitReceiverAccess(ast.name);
         }
-        this.addImplicitReceiverAccess(ast.name);
       }
       if (result == null) {
         result = receiver.prop(ast.name);
@@ -552,7 +598,7 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
 
     let varExpr: o.ReadPropExpr|null = null;
     if (receiver === this._implicitReceiver) {
-      const localExpr = this._getLocal(ast.name);
+      const localExpr = this._getLocal(ast.name, ast.receiver);
       if (localExpr) {
         if (localExpr instanceof o.ReadPropExpr) {
           // If the local variable is a property read expression, it's a reference
@@ -588,6 +634,10 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
     return this.convertSafeAccess(ast, this.leftMostSafeNode(ast), mode);
   }
 
+  visitSafeKeyedRead(ast: cdAst.SafeKeyedRead, mode: _Mode): any {
+    return this.convertSafeAccess(ast, this.leftMostSafeNode(ast), mode);
+  }
+
   visitAll(asts: cdAst.AST[], mode: _Mode): any {
     return asts.map(ast => this._visit(ast, mode));
   }
@@ -604,7 +654,8 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
   }
 
   private convertSafeAccess(
-      ast: cdAst.AST, leftMostSafe: cdAst.SafeMethodCall|cdAst.SafePropertyRead, mode: _Mode): any {
+      ast: cdAst.AST, leftMostSafe: cdAst.SafeMethodCall|cdAst.SafePropertyRead|cdAst.SafeKeyedRead,
+      mode: _Mode): any {
     // If the expression contains a safe access node on the left it needs to be converted to
     // an expression that guards the access to the member by checking the receiver for blank. As
     // execution proceeds from left to right, the left most part of the expression must be guarded
@@ -646,7 +697,7 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
 
     let guardedExpression = this._visit(leftMostSafe.receiver, _Mode.Expression);
     let temporary: o.ReadVarExpr = undefined!;
-    if (this.needsTemporary(leftMostSafe.receiver)) {
+    if (this.needsTemporaryInSafeAccess(leftMostSafe.receiver)) {
       // If the expression has method calls or pipes then we need to save the result into a
       // temporary variable to avoid calling stateful or impure code more than once.
       temporary = this.allocateTemporary();
@@ -666,7 +717,13 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
           leftMostSafe,
           new cdAst.MethodCall(
               leftMostSafe.span, leftMostSafe.sourceSpan, leftMostSafe.nameSpan,
-              leftMostSafe.receiver, leftMostSafe.name, leftMostSafe.args));
+              leftMostSafe.receiver, leftMostSafe.name, leftMostSafe.args,
+              leftMostSafe.argumentSpan));
+    } else if (leftMostSafe instanceof cdAst.SafeKeyedRead) {
+      this._nodeMap.set(
+          leftMostSafe,
+          new cdAst.KeyedRead(
+              leftMostSafe.span, leftMostSafe.sourceSpan, leftMostSafe.receiver, leftMostSafe.key));
     } else {
       this._nodeMap.set(
           leftMostSafe,
@@ -688,7 +745,25 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
     }
 
     // Produce the conditional
-    return convertToStatementIfNeeded(mode, condition.conditional(o.literal(null), access));
+    return convertToStatementIfNeeded(mode, condition.conditional(o.NULL_EXPR, access));
+  }
+
+  private convertNullishCoalesce(ast: cdAst.Binary, mode: _Mode): any {
+    const left: o.Expression = this._visit(ast.left, _Mode.Expression);
+    const right: o.Expression = this._visit(ast.right, _Mode.Expression);
+    const temporary = this.allocateTemporary();
+    this.releaseTemporary(temporary);
+
+    // Generate the following expression. It is identical to how TS
+    // transpiles binary expressions with a nullish coalescing operator.
+    // let temp;
+    // (temp = a) !== null && temp !== undefined ? temp : b;
+    return convertToStatementIfNeeded(
+        mode,
+        temporary.set(left)
+            .notIdentical(o.NULL_EXPR)
+            .and(temporary.notIdentical(o.literal(undefined)))
+            .conditional(temporary, right));
   }
 
   // Given an expression of the form a?.b.c?.d.e then the left most safe node is
@@ -698,11 +773,15 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
   //   a == null ? null : a.c.b.c?.d.e
   // then to:
   //   a == null ? null : a.b.c == null ? null : a.b.c.d.e
-  private leftMostSafeNode(ast: cdAst.AST): cdAst.SafePropertyRead|cdAst.SafeMethodCall {
+  private leftMostSafeNode(ast: cdAst.AST): cdAst.SafePropertyRead|cdAst.SafeMethodCall
+      |cdAst.SafeKeyedRead {
     const visit = (visitor: cdAst.AstVisitor, ast: cdAst.AST): any => {
       return (this._nodeMap.get(ast) || ast).visit(visitor);
     };
     return ast.visit({
+      visitUnary(ast: cdAst.Unary) {
+        return null;
+      },
       visitBinary(ast: cdAst.Binary) {
         return null;
       },
@@ -718,11 +797,14 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       visitImplicitReceiver(ast: cdAst.ImplicitReceiver) {
         return null;
       },
+      visitThisReceiver(ast: cdAst.ThisReceiver) {
+        return null;
+      },
       visitInterpolation(ast: cdAst.Interpolation) {
         return null;
       },
       visitKeyedRead(ast: cdAst.KeyedRead) {
-        return visit(this, ast.obj);
+        return visit(this, ast.receiver);
       },
       visitKeyedWrite(ast: cdAst.KeyedWrite) {
         return null;
@@ -762,6 +844,9 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       },
       visitSafePropertyRead(ast: cdAst.SafePropertyRead) {
         return visit(this, ast.receiver) || ast;
+      },
+      visitSafeKeyedRead(ast: cdAst.SafeKeyedRead) {
+        return visit(this, ast.receiver) || ast;
       }
     });
   }
@@ -769,7 +854,7 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
   // Returns true of the AST includes a method or a pipe indicating that, if the
   // expression is used as the target of a safe property or method access then
   // the expression should be stored into a temporary variable.
-  private needsTemporary(ast: cdAst.AST): boolean {
+  private needsTemporaryInSafeAccess(ast: cdAst.AST): boolean {
     const visit = (visitor: cdAst.AstVisitor, ast: cdAst.AST): boolean => {
       return ast && (this._nodeMap.get(ast) || ast).visit(visitor);
     };
@@ -777,6 +862,9 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       return ast.some(ast => visit(visitor, ast));
     };
     return ast.visit({
+      visitUnary(ast: cdAst.Unary): boolean {
+        return visit(this, ast.expr);
+      },
       visitBinary(ast: cdAst.Binary): boolean {
         return visit(this, ast.left) || visit(this, ast.right);
       },
@@ -790,6 +878,9 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
         return true;
       },
       visitImplicitReceiver(ast: cdAst.ImplicitReceiver) {
+        return false;
+      },
+      visitThisReceiver(ast: cdAst.ThisReceiver) {
         return false;
       },
       visitInterpolation(ast: cdAst.Interpolation) {
@@ -836,6 +927,9 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
       },
       visitSafePropertyRead(ast: cdAst.SafePropertyRead) {
         return false;
+      },
+      visitSafeKeyedRead(ast: cdAst.SafeKeyedRead) {
+        return false;
       }
     });
   }
@@ -868,7 +962,8 @@ class _AstToIrVisitor implements cdAst.AstVisitor {
     if (this.baseSourceSpan) {
       const start = this.baseSourceSpan.start.moveBy(span.start);
       const end = this.baseSourceSpan.start.moveBy(span.end);
-      return new ParseSourceSpan(start, end);
+      const fullStart = this.baseSourceSpan.fullStart.moveBy(span.start);
+      return new ParseSourceSpan(start, end, fullStart);
     } else {
       return null;
     }
@@ -891,7 +986,9 @@ function flattenStatements(arg: any, output: o.Statement[]) {
 }
 
 class DefaultLocalResolver implements LocalResolver {
+  constructor(public globals?: Set<string>) {}
   notifyImplicitReceiverUse(): void {}
+  maybeRestoreView(): void {}
   getLocal(name: string): o.Expression|null {
     if (name === EventHandlerVars.event.name) {
       return EventHandlerVars.event;

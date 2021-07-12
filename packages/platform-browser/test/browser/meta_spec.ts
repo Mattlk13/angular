@@ -126,6 +126,18 @@ import {expect} from '@angular/platform-browser/testing/src/matchers';
       metaService.removeTagElement(actual);
     });
 
+    it('should add httpEquiv meta tag as http-equiv', () => {
+      metaService.addTag({httpEquiv: 'refresh', content: '3;url=http://test'});
+
+      const actual = metaService.getTag('http-equiv')!;
+      expect(actual).not.toBeNull();
+      expect(actual.getAttribute('http-equiv')).toEqual('refresh');
+      expect(actual.getAttribute('content')).toEqual('3;url=http://test');
+
+      // clean up
+      metaService.removeTagElement(actual);
+    });
+
     it('should add multiple new meta tags', () => {
       const nameSelector = 'name="twitter:title"';
       const propertySelector = 'property="og:title"';
@@ -154,6 +166,16 @@ import {expect} from '@angular/platform-browser/testing/src/matchers';
 
       expect(metaService.getTags(selector).length).toEqual(1);
     });
+
+    it('should not add meta tag if it is already present on the page, even if the first tag with the same name has different other attributes',
+       () => {
+         metaService.addTag({name: 'description', content: 'aaa'});
+         metaService.addTag({name: 'description', content: 'bbb'});
+         metaService.addTag({name: 'description', content: 'aaa'});
+         metaService.addTag({name: 'description', content: 'bbb'});
+
+         expect(metaService.getTags('name="description"').length).toEqual(2);
+       });
 
     it('should add meta tag if it is already present on the page and but has different attr',
        () => {

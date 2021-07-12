@@ -11,7 +11,7 @@ import {absoluteFrom, getSourceFileOrError} from '../../file_system';
 import {runInEachFileSystem} from '../../file_system/testing';
 import {Reference} from '../../imports';
 import {DependencyTracker} from '../../incremental/api';
-import {Declaration, KnownDeclaration, SpecialDeclarationKind, TypeScriptReflectionHost} from '../../reflection';
+import {Declaration, DeclarationKind, isConcreteDeclaration, KnownDeclaration, SpecialDeclarationKind, TypeScriptReflectionHost} from '../../reflection';
 import {getDeclaration, makeProgram} from '../../testing';
 import {DynamicValue} from '../src/dynamic';
 import {PartialEvaluator} from '../src/interface';
@@ -357,6 +357,30 @@ runInEachFileSystem(() => {
       expect(value.reason.node.getText()).toEqual('window: any');
     });
 
+    it('supports declarations of primitive constant types', () => {
+      expect(evaluate(`declare const x: 'foo';`, `x`)).toEqual('foo');
+      expect(evaluate(`declare const x: 42;`, `x`)).toEqual(42);
+      expect(evaluate(`declare const x: null;`, `x`)).toEqual(null);
+      expect(evaluate(`declare const x: true;`, `x`)).toEqual(true);
+    });
+
+    it('supports declarations of tuples', () => {
+      expect(evaluate(`declare const x: ['foo', 42, null, true];`, `x`)).toEqual([
+        'foo', 42, null, true
+      ]);
+      expect(evaluate(`declare const x: ['bar'];`, `[...x]`)).toEqual(['bar']);
+    });
+
+    it('evaluates tuple elements it cannot understand to DynamicValue', () => {
+      const value = evaluate(`declare const x: ['foo', string];`, `x`) as [string, DynamicValue];
+
+      expect(Array.isArray(value)).toBeTrue();
+      expect(value[0]).toEqual('foo');
+      expect(value[1] instanceof DynamicValue).toBeTrue();
+      expect(value[1].isFromDynamicType()).toBe(true);
+    });
+
+
     it('imports work', () => {
       const {program} = makeProgram([
         {name: _('/second.ts'), contents: 'export function foo(bar) { return bar; }'},
@@ -622,15 +646,18 @@ runInEachFileSystem(() => {
       expect(id.text).toEqual('Target');
     });
 
-    it('should resolve functions with more than one statement to an unknown value', () => {
+    it('should resolve functions with more than one statement to a complex function call', () => {
       const value = evaluate(`function foo(bar) { const b = bar; return b; }`, 'foo("test")');
 
       if (!(value instanceof DynamicValue)) {
         return fail(`Should have resolved to a DynamicValue`);
       }
-
-      expect(value.isFromUnknown()).toBe(true);
+      if (!value.isFromComplexFunctionCall()) {
+        return fail('Expected DynamicValue to be from complex function call');
+      }
       expect((value.node as ts.CallExpression).expression.getText()).toBe('foo');
+      expect((value.reason.node as ts.FunctionDeclaration).getText())
+          .toContain('const b = bar; return b;');
     });
 
     describe('(with imported TypeScript helpers)', () => {
@@ -643,6 +670,8 @@ runInEachFileSystem(() => {
               export declare function __assign(t: any, ...sources: any[]): any;
               export declare function __spread(...args: any[][]): any[];
               export declare function __spreadArrays(...args: any[][]): any[];
+              export declare function __spreadArray(to: any[], from: any[]): any[];
+              export declare function __read(o: any, n?: number): any[];
             `,
           },
         ]);
@@ -730,6 +759,52 @@ runInEachFileSystem(() => {
 
         expect(arr).toEqual([4, 5, 6]);
       });
+
+      it('should evaluate `__spreadArray()` (named import)', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              import {__spreadArray} from 'tslib';
+              const a = [4];
+              const b = [5, 6];
+            `,
+            '__spreadArray(a, b)');
+
+        expect(arr).toEqual([4, 5, 6]);
+      });
+
+      it('should evaluate `__spreadArray()` (star import)', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              import * as tslib from 'tslib';
+              const a = [4];
+              const b = [5, 6];
+            `,
+            'tslib.__spreadArray(a, b)');
+
+        expect(arr).toEqual([4, 5, 6]);
+      });
+
+      it('should evaluate `__read()` (named import)', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              import {__read} from 'tslib';
+              const a = [5, 6];
+            `,
+            '__read(a)');
+
+        expect(arr).toEqual([5, 6]);
+      });
+
+      it('should evaluate `__read()` (star import)', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              import * as tslib from 'tslib';
+              const a = [5, 6];
+            `,
+            'tslib.__read(a)');
+
+        expect(arr).toEqual([5, 6]);
+      });
     });
 
     describe('(with emitted TypeScript helpers as functions)', () => {
@@ -739,6 +814,8 @@ runInEachFileSystem(() => {
           function __assign(t, ...sources) { /* ... */ }
           function __spread(...args) { /* ... */ }
           function __spreadArrays(...args) { /* ... */ }
+          function __spreadArray(to, from) { /* ... */ }
+          function __read(o) { /* ... */ }
         `;
         const {checker, expression} = makeExpression(helpers + code, expr);
 
@@ -782,6 +859,27 @@ runInEachFileSystem(() => {
             '__spreadArrays(a, b)');
 
         expect(arr).toEqual([4, 5, 6]);
+      });
+
+      it('should evaluate `__spreadArray()`', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              const a = [4];
+              const b = [5, 6];
+            `,
+            '__spreadArray(a, b)');
+
+        expect(arr).toEqual([4, 5, 6]);
+      });
+
+      it('should evaluate `__read()`', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              const a = [5, 6];
+            `,
+            '__read(a)');
+
+        expect(arr).toEqual([5, 6]);
       });
     });
 
@@ -792,6 +890,8 @@ runInEachFileSystem(() => {
           var __assign = (this && this.__assign) || function (t, ...sources) { /* ... */ }
           var __spread = (this && this.__spread) || function (...args) { /* ... */ }
           var __spreadArrays = (this && this.__spreadArrays) || function (...args) { /* ... */ }
+          var __spreadArray = (this && this.__spreadArray) || function (to, from) { /* ... */ }
+          var __read = (this && this.__read) || function (o) { /* ... */ }
         `;
         const {checker, expression} = makeExpression(helpers + code, expr);
 
@@ -835,6 +935,27 @@ runInEachFileSystem(() => {
             '__spreadArrays(a, b)');
 
         expect(arr).toEqual([4, 5, 6]);
+      });
+
+      it('should evaluate `__spreadArray()`', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              const a = [4];
+              const b = [5, 6];
+            `,
+            '__spreadArray(a, b)');
+
+        expect(arr).toEqual([4, 5, 6]);
+      });
+
+      it('should evaluate `__read()`', () => {
+        const arr: number[] = evaluateExpression(
+            `
+              const a = [5, 6];
+            `,
+            '__read(a)');
+
+        expect(arr).toEqual([5, 6]);
       });
     });
 
@@ -917,7 +1038,7 @@ runInEachFileSystem(() => {
   class DownleveledEnumReflectionHost extends TypeScriptReflectionHost {
     getDeclarationOfIdentifier(id: ts.Identifier): Declaration|null {
       const declaration = super.getDeclarationOfIdentifier(id);
-      if (declaration !== null && declaration.node !== null) {
+      if (declaration !== null && isConcreteDeclaration(declaration)) {
         const enumMembers = [
           {name: ts.createStringLiteral('ValueA'), initializer: ts.createStringLiteral('a')},
           {name: ts.createStringLiteral('ValueB'), initializer: ts.createStringLiteral('b')},
@@ -958,6 +1079,7 @@ runInEachFileSystem(() => {
           node: id,
           viaModule: null,
           identity: null,
+          kind: DeclarationKind.Concrete,
         };
       }
 
@@ -965,8 +1087,8 @@ runInEachFileSystem(() => {
     }
   }
 
-  function getTsHelperFn(node: ts.Declaration): KnownDeclaration|null {
-    const id = (node as ts.Declaration & {name?: ts.Identifier}).name || null;
+  function getTsHelperFn(node: ts.Node): KnownDeclaration|null {
+    const id = (node as ts.Node & {name?: ts.Identifier}).name || null;
     const name = id && id.text;
 
     switch (name) {
@@ -976,6 +1098,10 @@ runInEachFileSystem(() => {
         return KnownDeclaration.TsHelperSpread;
       case '__spreadArrays':
         return KnownDeclaration.TsHelperSpreadArrays;
+      case '__spreadArray':
+        return KnownDeclaration.TsHelperSpreadArray;
+      case '__read':
+        return KnownDeclaration.TsHelperRead;
       default:
         return null;
     }
@@ -985,6 +1111,5 @@ runInEachFileSystem(() => {
 const fakeDepTracker: DependencyTracker = {
   addDependency: () => undefined,
   addResourceDependency: () => undefined,
-  addTransitiveDependency: () => undefined,
-  addTransitiveResources: () => undefined,
+  recordDependencyAnalysisFailure: () => undefined,
 };

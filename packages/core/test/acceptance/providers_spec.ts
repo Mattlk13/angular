@@ -8,7 +8,7 @@
 
 import {CommonModule} from '@angular/common';
 import {Component, Directive, forwardRef, Inject, Injectable, InjectionToken, Injector, NgModule, Optional} from '@angular/core';
-import {async, inject, TestBed} from '@angular/core/testing';
+import {inject, TestBed, waitForAsync} from '@angular/core/testing';
 import {By} from '@angular/platform-browser';
 import {expect} from '@angular/platform-browser/testing/src/matchers';
 import {modifiedInIvy, onlyInIvy} from '@angular/private/testing';
@@ -603,7 +603,7 @@ describe('providers', () => {
       });
 
       it('should support injecting without bootstrapping',
-         async(inject([MyComp, MyService], (comp: MyComp, service: MyService) => {
+         waitForAsync(inject([MyComp, MyService], (comp: MyComp, service: MyService) => {
            expect(comp.svc.value).toEqual('some value');
          })));
     });
@@ -657,8 +657,10 @@ describe('providers', () => {
         constructor(public foo: SomeProvider) {}
       }
 
-      TestBed.configureTestingModule(
-          {declarations: [App], providers: [{provide: SomeProvider, useClass: SomeProviderImpl}]});
+      // We don't configure the `SomeProvider` in the TestingModule so that it uses the
+      // tree-shakable provider given in the `@Injectable` decorator above, which makes use of the
+      // `forwardRef()`.
+      TestBed.configureTestingModule({declarations: [App]});
       const fixture = TestBed.createComponent(App);
       fixture.detectChanges();
 

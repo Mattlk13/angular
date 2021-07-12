@@ -166,11 +166,11 @@ export class Meta {
       HTMLMetaElement {
     if (!forceCreation) {
       const selector: string = this._parseSelector(meta);
-      const elem: HTMLMetaElement = this.getTag(selector)!;
       // It's allowed to have multiple elements with the same name so it's not enough to
       // just check that element with the same name already present on the page. We also need to
       // check if element has tag attributes
-      if (elem && this._containsAttributes(meta, elem)) return elem;
+      const elem = this.getTags(selector).filter(elem => this._containsAttributes(meta, elem))[0];
+      if (elem !== undefined) return elem;
     }
     const element: HTMLMetaElement = this._dom.createElement('meta') as HTMLMetaElement;
     this._setMetaElementAttributes(meta, element);
@@ -180,7 +180,8 @@ export class Meta {
   }
 
   private _setMetaElementAttributes(tag: MetaDefinition, el: HTMLMetaElement): HTMLMetaElement {
-    Object.keys(tag).forEach((prop: string) => el.setAttribute(prop, tag[prop]));
+    Object.keys(tag).forEach(
+        (prop: string) => el.setAttribute(this._getMetaKeyMap(prop), tag[prop]));
     return el;
   }
 
@@ -190,6 +191,18 @@ export class Meta {
   }
 
   private _containsAttributes(tag: MetaDefinition, elem: HTMLMetaElement): boolean {
-    return Object.keys(tag).every((key: string) => elem.getAttribute(key) === tag[key]);
+    return Object.keys(tag).every(
+        (key: string) => elem.getAttribute(this._getMetaKeyMap(key)) === tag[key]);
+  }
+
+  private _getMetaKeyMap(prop: string): string {
+    return META_KEYS_MAP[prop] || prop;
   }
 }
+
+/**
+ * Mapping for MetaDefinition properties with their correct meta attribute names
+ */
+const META_KEYS_MAP: {[prop: string]: string;} = {
+  httpEquiv: 'http-equiv'
+};

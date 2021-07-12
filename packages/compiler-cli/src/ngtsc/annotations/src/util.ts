@@ -6,18 +6,18 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {Expression, ExternalExpr, LiteralExpr, ParseLocation, ParseSourceFile, ParseSourceSpan, R3DependencyMetadata, R3Reference, R3ResolvedDependencyType, ReadPropExpr, WrappedNodeExpr} from '@angular/compiler';
+import {Expression, ExternalExpr, LiteralExpr, ParseLocation, ParseSourceFile, ParseSourceSpan, R3CompiledExpression, R3DependencyMetadata, R3Reference, ReadPropExpr, Statement, WrappedNodeExpr} from '@angular/compiler';
+import {R3FactoryMetadata} from '@angular/compiler/src/compiler';
+import {FactoryTarget} from '@angular/compiler/src/render3/partial/api';
 import * as ts from 'typescript';
 
-import {ErrorCode, FatalDiagnosticError, makeDiagnostic} from '../../diagnostics';
-import {DefaultImportRecorder, ImportFlags, Reference, ReferenceEmitter} from '../../imports';
+import {ErrorCode, FatalDiagnosticError, makeDiagnostic, makeRelatedInformation} from '../../diagnostics';
+import {ImportFlags, Reference, ReferenceEmitter} from '../../imports';
+import {attachDefaultImportDeclaration} from '../../imports/src/default';
 import {ForeignFunctionResolver, PartialEvaluator} from '../../partial_evaluator';
-import {ClassDeclaration, CtorParameter, Decorator, Import, isNamedClassDeclaration, ReflectionHost, TypeValueReference} from '../../reflection';
+import {ClassDeclaration, CtorParameter, Decorator, Import, ImportedTypeValueReference, isNamedClassDeclaration, LocalTypeValueReference, ReflectionHost, TypeValueReference, TypeValueReferenceKind, UnavailableValue, ValueUnavailableKind} from '../../reflection';
 import {DeclarationData} from '../../scope';
-
-export enum ConstructorDepErrorKind {
-  NO_SUITABLE_TOKEN,
-}
+import {CompileResult} from '../../transform';
 
 export type ConstructorDeps = {
   deps: R3DependencyMetadata[];
@@ -29,12 +29,11 @@ export type ConstructorDeps = {
 export interface ConstructorDepError {
   index: number;
   param: CtorParameter;
-  kind: ConstructorDepErrorKind;
+  reason: UnavailableValue;
 }
 
 export function getConstructorDependencies(
-    clazz: ClassDeclaration, reflector: ReflectionHost,
-    defaultImportRecorder: DefaultImportRecorder, isCore: boolean): ConstructorDeps|null {
+    clazz: ClassDeclaration, reflector: ReflectionHost, isCore: boolean): ConstructorDeps|null {
   const deps: R3DependencyMetadata[] = [];
   const errors: ConstructorDepError[] = [];
   let ctorParams = reflector.getConstructorParameters(clazz);
@@ -46,10 +45,9 @@ export function getConstructorDependencies(
     }
   }
   ctorParams.forEach((param, idx) => {
-    let token = valueReferenceToExpression(param.typeValueReference, defaultImportRecorder);
-    let attribute: Expression|null = null;
+    let token = valueReferenceToExpression(param.typeValueReference);
+    let attributeNameType: Expression|null = null;
     let optional = false, self = false, skipSelf = false, host = false;
-    let resolved = R3ResolvedDependencyType.Token;
 
     (param.decorators || []).filter(dec => isCore || isAngularCore(dec)).forEach(dec => {
       const name = isCore || dec.import === null ? dec.name : dec.import!.name;
@@ -77,11 +75,11 @@ export function getConstructorDependencies(
         const attributeName = dec.args[0];
         token = new WrappedNodeExpr(attributeName);
         if (ts.isStringLiteralLike(attributeName)) {
-          attribute = new LiteralExpr(attributeName.text);
+          attributeNameType = new LiteralExpr(attributeName.text);
         } else {
-          attribute = new WrappedNodeExpr(ts.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword));
+          attributeNameType =
+              new WrappedNodeExpr(ts.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword));
         }
-        resolved = R3ResolvedDependencyType.Attribute;
       } else {
         throw new FatalDiagnosticError(
             ErrorCode.DECORATOR_UNEXPECTED, Decorator.nodeForError(dec),
@@ -89,18 +87,18 @@ export function getConstructorDependencies(
       }
     });
 
-    if (token instanceof ExternalExpr && token.value.name === 'ChangeDetectorRef' &&
-        token.value.moduleName === '@angular/core') {
-      resolved = R3ResolvedDependencyType.ChangeDetectorRef;
-    }
     if (token === null) {
+      if (param.typeValueReference.kind !== TypeValueReferenceKind.UNAVAILABLE) {
+        throw new Error(
+            'Illegal state: expected value reference to be unavailable if no token is present');
+      }
       errors.push({
         index: idx,
-        kind: ConstructorDepErrorKind.NO_SUITABLE_TOKEN,
         param,
+        reason: param.typeValueReference.reason,
       });
     } else {
-      deps.push({token, attribute, optional, self, skipSelf, host, resolved});
+      deps.push({token, attributeNameType, optional, self, skipSelf, host});
     }
   });
   if (errors.length === 0) {
@@ -117,36 +115,23 @@ export function getConstructorDependencies(
  * references are converted to an `ExternalExpr`. Note that this is only valid in the context of the
  * file in which the `TypeValueReference` originated.
  */
-export function valueReferenceToExpression(
-    valueRef: TypeValueReference, defaultImportRecorder: DefaultImportRecorder): Expression;
-export function valueReferenceToExpression(
-    valueRef: null, defaultImportRecorder: DefaultImportRecorder): null;
-export function valueReferenceToExpression(
-    valueRef: TypeValueReference|null, defaultImportRecorder: DefaultImportRecorder): Expression|
-    null;
-export function valueReferenceToExpression(
-    valueRef: TypeValueReference|null, defaultImportRecorder: DefaultImportRecorder): Expression|
-    null {
-  if (valueRef === null) {
+export function valueReferenceToExpression(valueRef: LocalTypeValueReference|
+                                           ImportedTypeValueReference): Expression;
+export function valueReferenceToExpression(valueRef: TypeValueReference): Expression|null;
+export function valueReferenceToExpression(valueRef: TypeValueReference): Expression|null {
+  if (valueRef.kind === TypeValueReferenceKind.UNAVAILABLE) {
     return null;
-  } else if (valueRef.local) {
-    if (defaultImportRecorder !== null && valueRef.defaultImportStatement !== null &&
-        ts.isIdentifier(valueRef.expression)) {
-      defaultImportRecorder.recordImportedIdentifier(
-          valueRef.expression, valueRef.defaultImportStatement);
+  } else if (valueRef.kind === TypeValueReferenceKind.LOCAL) {
+    const expr = new WrappedNodeExpr(valueRef.expression);
+    if (valueRef.defaultImportStatement !== null) {
+      attachDefaultImportDeclaration(expr, valueRef.defaultImportStatement);
     }
-    return new WrappedNodeExpr(valueRef.expression);
+    return expr;
   } else {
-    // TODO(alxhub): this cast is necessary because the g3 typescript version doesn't narrow here.
-    const ref = valueRef as {
-      moduleName: string;
-      importedName: string;
-      nestedPath: string[]|null;
-    };
     let importExpr: Expression =
-        new ExternalExpr({moduleName: ref.moduleName, name: ref.importedName});
-    if (ref.nestedPath !== null) {
-      for (const property of ref.nestedPath) {
+        new ExternalExpr({moduleName: valueRef.moduleName, name: valueRef.importedName});
+    if (valueRef.nestedPath !== null) {
+      for (const property of valueRef.nestedPath) {
         importExpr = new ReadPropExpr(importExpr, property);
       }
     }
@@ -174,10 +159,10 @@ export function unwrapConstructorDependencies(deps: ConstructorDeps|null): R3Dep
 }
 
 export function getValidConstructorDependencies(
-    clazz: ClassDeclaration, reflector: ReflectionHost,
-    defaultImportRecorder: DefaultImportRecorder, isCore: boolean): R3DependencyMetadata[]|null {
+    clazz: ClassDeclaration, reflector: ReflectionHost, isCore: boolean): R3DependencyMetadata[]|
+    null {
   return validateConstructorDependencies(
-      clazz, getConstructorDependencies(clazz, reflector, defaultImportRecorder, isCore));
+      clazz, getConstructorDependencies(clazz, reflector, isCore));
 }
 
 /**
@@ -195,27 +180,93 @@ export function validateConstructorDependencies(
     return deps.deps;
   } else {
     // TODO(alxhub): this cast is necessary because the g3 typescript version doesn't narrow here.
-    const {param, index} = (deps as {errors: ConstructorDepError[]}).errors[0];
     // There is at least one error.
-    throw new FatalDiagnosticError(
-        ErrorCode.PARAM_MISSING_TOKEN, param.nameNode,
-        `No suitable injection token for parameter '${param.name || index}' of class '${
-            clazz.name.text}'.\n` +
-            (param.typeNode !== null ? `Found ${param.typeNode.getText()}` :
-                                       'no type or decorator'));
+    const error = (deps as {errors: ConstructorDepError[]}).errors[0];
+    throw createUnsuitableInjectionTokenError(clazz, error);
   }
+}
+
+/**
+ * Creates a fatal error with diagnostic for an invalid injection token.
+ * @param clazz The class for which the injection token was unavailable.
+ * @param error The reason why no valid injection token is available.
+ */
+function createUnsuitableInjectionTokenError(
+    clazz: ClassDeclaration, error: ConstructorDepError): FatalDiagnosticError {
+  const {param, index, reason} = error;
+  let chainMessage: string|undefined = undefined;
+  let hints: ts.DiagnosticRelatedInformation[]|undefined = undefined;
+  switch (reason.kind) {
+    case ValueUnavailableKind.UNSUPPORTED:
+      chainMessage = 'Consider using the @Inject decorator to specify an injection token.';
+      hints = [
+        makeRelatedInformation(reason.typeNode, 'This type is not supported as injection token.'),
+      ];
+      break;
+    case ValueUnavailableKind.NO_VALUE_DECLARATION:
+      chainMessage = 'Consider using the @Inject decorator to specify an injection token.';
+      hints = [
+        makeRelatedInformation(
+            reason.typeNode,
+            'This type does not have a value, so it cannot be used as injection token.'),
+      ];
+      if (reason.decl !== null) {
+        hints.push(makeRelatedInformation(reason.decl, 'The type is declared here.'));
+      }
+      break;
+    case ValueUnavailableKind.TYPE_ONLY_IMPORT:
+      chainMessage =
+          'Consider changing the type-only import to a regular import, or use the @Inject decorator to specify an injection token.';
+      hints = [
+        makeRelatedInformation(
+            reason.typeNode,
+            'This type is imported using a type-only import, which prevents it from being usable as an injection token.'),
+        makeRelatedInformation(reason.importClause, 'The type-only import occurs here.'),
+      ];
+      break;
+    case ValueUnavailableKind.NAMESPACE:
+      chainMessage = 'Consider using the @Inject decorator to specify an injection token.';
+      hints = [
+        makeRelatedInformation(
+            reason.typeNode,
+            'This type corresponds with a namespace, which cannot be used as injection token.'),
+        makeRelatedInformation(reason.importClause, 'The namespace import occurs here.'),
+      ];
+      break;
+    case ValueUnavailableKind.UNKNOWN_REFERENCE:
+      chainMessage = 'The type should reference a known declaration.';
+      hints = [makeRelatedInformation(reason.typeNode, 'This type could not be resolved.')];
+      break;
+    case ValueUnavailableKind.MISSING_TYPE:
+      chainMessage =
+          'Consider adding a type to the parameter or use the @Inject decorator to specify an injection token.';
+      break;
+  }
+
+  const chain: ts.DiagnosticMessageChain = {
+    messageText: `No suitable injection token for parameter '${param.name || index}' of class '${
+        clazz.name.text}'.`,
+    category: ts.DiagnosticCategory.Error,
+    code: 0,
+    next: [{
+      messageText: chainMessage,
+      category: ts.DiagnosticCategory.Message,
+      code: 0,
+    }],
+  };
+
+  return new FatalDiagnosticError(ErrorCode.PARAM_MISSING_TOKEN, param.nameNode, chain, hints);
 }
 
 export function toR3Reference(
     valueRef: Reference, typeRef: Reference, valueContext: ts.SourceFile,
     typeContext: ts.SourceFile, refEmitter: ReferenceEmitter): R3Reference {
-  const value = refEmitter.emit(valueRef, valueContext);
-  const type = refEmitter.emit(
-      typeRef, typeContext, ImportFlags.ForceNewImport | ImportFlags.AllowTypeImports);
-  if (value === null || type === null) {
-    throw new Error(`Could not refer to ${ts.SyntaxKind[valueRef.node.kind]}`);
-  }
-  return {value, type};
+  return {
+    value: refEmitter.emit(valueRef, valueContext).expression,
+    type: refEmitter
+              .emit(typeRef, typeContext, ImportFlags.ForceNewImport | ImportFlags.AllowTypeImports)
+              .expression,
+  };
 }
 
 export function isAngularCore(decorator: Decorator): decorator is Decorator&{import: Import} {
@@ -277,36 +328,40 @@ function expandForwardRef(arg: ts.Expression): ts.Expression|null {
   }
 }
 
+
 /**
- * Possibly resolve a forwardRef() expression into the inner value.
+ * If the given `node` is a forwardRef() expression then resolve its inner value, otherwise return
+ * `null`.
  *
  * @param node the forwardRef() expression to resolve
  * @param reflector a ReflectionHost
- * @returns the resolved expression, if the original expression was a forwardRef(), or the original
- * expression otherwise
+ * @returns the resolved expression, if the original expression was a forwardRef(), or `null`
+ *     otherwise.
  */
-export function unwrapForwardRef(node: ts.Expression, reflector: ReflectionHost): ts.Expression {
+export function tryUnwrapForwardRef(node: ts.Expression, reflector: ReflectionHost): ts.Expression|
+    null {
   node = unwrapExpression(node);
   if (!ts.isCallExpression(node) || node.arguments.length !== 1) {
-    return node;
+    return null;
   }
 
   const fn =
       ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression;
   if (!ts.isIdentifier(fn)) {
-    return node;
+    return null;
   }
 
   const expr = expandForwardRef(node.arguments[0]);
   if (expr === null) {
-    return node;
+    return null;
   }
+
   const imp = reflector.getImportOfIdentifier(fn);
   if (imp === null || imp.from !== '@angular/core' || imp.name !== 'forwardRef') {
-    return node;
-  } else {
-    return expr;
+    return null;
   }
+
+  return expr;
 }
 
 /**
@@ -408,7 +463,7 @@ export function wrapFunctionExpressionsInParens(expression: ts.Expression): ts.E
  */
 export function makeDuplicateDeclarationError(
     node: ClassDeclaration, data: DeclarationData[], kind: string): ts.Diagnostic {
-  const context: {node: ts.Node; messageText: string;}[] = [];
+  const context: ts.DiagnosticRelatedInformation[] = [];
   for (const decl of data) {
     if (decl.rawDeclarations === null) {
       continue;
@@ -416,11 +471,10 @@ export function makeDuplicateDeclarationError(
     // Try to find the reference to the declaration within the declarations array, to hang the
     // error there. If it can't be found, fall back on using the NgModule's name.
     const contextNode = decl.ref.getOriginForDiagnostics(decl.rawDeclarations, decl.ngModule.name);
-    context.push({
-      node: contextNode,
-      messageText: `'${node.name.text}' is listed in the declarations of the NgModule '${
-          decl.ngModule.name.text}'.`,
-    });
+    context.push(makeRelatedInformation(
+        contextNode,
+        `'${node.name.text}' is listed in the declarations of the NgModule '${
+            decl.ngModule.name.text}'.`));
   }
 
   // Finally, produce the diagnostic.
@@ -459,7 +513,13 @@ export function resolveProvidersRequiringFactory(
       }
     }
 
-    if (tokenClass !== null && reflector.isClass(tokenClass.node)) {
+    // TODO(alxhub): there was a bug where `getConstructorParameters` would return `null` for a
+    // class in a .d.ts file, always, even if the class had a constructor. This was fixed for
+    // `getConstructorParameters`, but that fix causes more classes to be recognized here as needing
+    // provider checks, which is a breaking change in g3. Avoid this breakage for now by skipping
+    // classes from .d.ts files here directly, until g3 can be cleaned up.
+    if (tokenClass !== null && !tokenClass.node.getSourceFile().isDeclarationFile &&
+        reflector.isClass(tokenClass.node)) {
       const constructorParameters = reflector.getConstructorParameters(tokenClass.node);
 
       // Note that we only want to capture providers with a non-trivial constructor,
@@ -500,4 +560,36 @@ export function createSourceSpan(node: ts.Node): ParseSourceSpan {
   return new ParseSourceSpan(
       new ParseLocation(parseSf, startOffset, startLine + 1, startCol + 1),
       new ParseLocation(parseSf, endOffset, endLine + 1, endCol + 1));
+}
+
+/**
+ * Collate the factory and definition compiled results into an array of CompileResult objects.
+ */
+export function compileResults(
+    fac: CompileResult, def: R3CompiledExpression, metadataStmt: Statement|null,
+    propName: string): CompileResult[] {
+  const statements = def.statements;
+  if (metadataStmt !== null) {
+    statements.push(metadataStmt);
+  }
+  return [
+    fac, {
+      name: propName,
+      initializer: def.expression,
+      statements: def.statements,
+      type: def.type,
+    }
+  ];
+}
+
+export function toFactoryMetadata(
+    meta: Omit<R3FactoryMetadata, 'target'>, target: FactoryTarget): R3FactoryMetadata {
+  return {
+    name: meta.name,
+    type: meta.type,
+    internalType: meta.internalType,
+    typeArgumentCount: meta.typeArgumentCount,
+    deps: meta.deps,
+    target
+  };
 }

@@ -140,7 +140,7 @@ class TemplateHumanizer implements TemplateAstVisitor {
 
   private _appendSourceSpan(ast: TemplateAst, input: any[]): any[] {
     if (!this.includeSourceSpan) return input;
-    input.push(ast.sourceSpan!.toString());
+    input.push(ast.sourceSpan.toString());
     return input;
   }
 }
@@ -538,6 +538,54 @@ describe('TemplateParser', () => {
 
     it('should parse bound text nodes', () => {
       expect(humanizeTplAst(parse('{{a}}', []))).toEqual([[BoundTextAst, '{{ a }}']]);
+    });
+
+    it('should parse bound text nodes inside quotes', () => {
+      expect(humanizeTplAst(parse('"{{a}}"', []))).toEqual([[BoundTextAst, '"{{ a }}"']]);
+    });
+
+    it('should parse bound text nodes with interpolations inside quotes', () => {
+      expect(humanizeTplAst(parse('{{ "{{a}}" }}', []))).toEqual([[BoundTextAst, '{{ "{{a}}" }}']]);
+      expect(humanizeTplAst(parse('{{"{{"}}', []))).toEqual([[BoundTextAst, '{{ "{{" }}']]);
+      expect(humanizeTplAst(parse('{{"}}"}}', []))).toEqual([[BoundTextAst, '{{ "}}" }}']]);
+      expect(humanizeTplAst(parse('{{"{"}}', []))).toEqual([[BoundTextAst, '{{ "{" }}']]);
+      expect(humanizeTplAst(parse('{{"}"}}', []))).toEqual([[BoundTextAst, '{{ "}" }}']]);
+    });
+
+    it('should parse bound text nodes with escaped quotes', () => {
+      expect(humanizeTplAst(parse(`{{'It\\'s just Angular'}}`, []))).toEqual([
+        [BoundTextAst, `{{ "It's just Angular" }}`]
+      ]);
+
+      expect(humanizeTplAst(parse(`{{'It\\'s {{ just Angular'}}`, []))).toEqual([
+        [BoundTextAst, `{{ "It's {{ just Angular" }}`]
+      ]);
+
+      expect(humanizeTplAst(parse(`{{'It\\'s }} just Angular'}}`, []))).toEqual([
+        [BoundTextAst, `{{ "It's }} just Angular" }}`]
+      ]);
+    });
+
+    it('should not parse bound text nodes with mismatching quotes', () => {
+      expect(humanizeTplAst(parse(`{{ "{{a}}' }}`, []))).toEqual([[TextAst, `{{ "{{a}}' }}`]]);
+    });
+
+    it('should parse interpolation with escaped backslashes', () => {
+      expect(humanizeTplAst(parse(`{{foo.split('\\\\')}}`, []))).toEqual([
+        [BoundTextAst, `{{ foo.split("\\") }}`]
+      ]);
+      expect(humanizeTplAst(parse(`{{foo.split('\\\\\\\\')}}`, []))).toEqual([
+        [BoundTextAst, `{{ foo.split("\\\\") }}`]
+      ]);
+      expect(humanizeTplAst(parse(`{{foo.split('\\\\\\\\\\\\')}}`, []))).toEqual([
+        [BoundTextAst, `{{ foo.split("\\\\\\") }}`]
+      ]);
+    });
+
+    it('should ignore quotes inside a comment', () => {
+      expect(humanizeTplAst(parse(`"{{name // " }}"`, []))).toEqual([
+        [BoundTextAst, `"{{ name }}"`]
+      ]);
     });
 
     it('should parse with custom interpolation config',
@@ -1574,7 +1622,8 @@ Reference "#a" is defined several times ("<div #a></div><div [ERROR ->]#a></div>
     describe('inline templates', () => {
       it('should report an error on variables declared with #', () => {
         expect(() => humanizeTplAst(parse('<div *ngIf="#a=b">', [])))
-            .toThrowError(/Parser Error: Unexpected token # at column 1/);
+            .toThrowError(
+                /Parser Error: Private identifiers are not supported\. Unexpected private identifier: #a at column 1/);
       });
 
       it('should parse variables via let ...', () => {
@@ -1656,7 +1705,7 @@ Reference "#a" is defined several times ("<div #a></div><div [ERROR ->]#a></div>
         expect(humanizeTplAst(parse('<div *ngIf="-1">', [ngIf]))).toEqual([
           [EmbeddedTemplateAst],
           [DirectiveAst, ngIf],
-          [BoundDirectivePropertyAst, 'ngIf', '0 - 1'],
+          [BoundDirectivePropertyAst, 'ngIf', '-1'],
           [ElementAst, 'div'],
         ]);
       });
@@ -2046,7 +2095,7 @@ Property binding a not used by any directive on an embedded template. Make sure 
 
     it('should support embedded template', () => {
       expect(humanizeTplAstSourceSpans(parse('<ng-template></ng-template>', []))).toEqual([
-        [EmbeddedTemplateAst, '<ng-template>']
+        [EmbeddedTemplateAst, '<ng-template></ng-template>']
       ]);
     });
 
@@ -2058,14 +2107,14 @@ Property binding a not used by any directive on an embedded template. Make sure 
 
     it('should support references', () => {
       expect(humanizeTplAstSourceSpans(parse('<div #a></div>', []))).toEqual([
-        [ElementAst, 'div', '<div #a>'], [ReferenceAst, 'a', null, '#a']
+        [ElementAst, 'div', '<div #a></div>'], [ReferenceAst, 'a', null, '#a']
       ]);
     });
 
     it('should support variables', () => {
       expect(humanizeTplAstSourceSpans(parse('<ng-template let-a="b"></ng-template>', [])))
           .toEqual([
-            [EmbeddedTemplateAst, '<ng-template let-a="b">'],
+            [EmbeddedTemplateAst, '<ng-template let-a="b"></ng-template>'],
             [VariableAst, 'a', 'b', 'let-a="b"'],
           ]);
     });
@@ -2128,7 +2177,7 @@ Property binding a not used by any directive on an embedded template. Make sure 
       expect(humanizeTplAstSourceSpans(
                  parse('<svg><circle /><use xlink:href="Port" /></svg>', [tagSel, attrSel])))
           .toEqual([
-            [ElementAst, ':svg:svg', '<svg>'],
+            [ElementAst, ':svg:svg', '<svg><circle /><use xlink:href="Port" /></svg>'],
             [ElementAst, ':svg:circle', '<circle />'],
             [DirectiveAst, tagSel, '<circle />'],
             [ElementAst, ':svg:use', '<use xlink:href="Port" />'],
@@ -2144,7 +2193,8 @@ Property binding a not used by any directive on an embedded template. Make sure 
                      inputs: ['aProp']
                    }).toSummary();
       expect(humanizeTplAstSourceSpans(parse('<div [aProp]="foo"></div>', [dirA]))).toEqual([
-        [ElementAst, 'div', '<div [aProp]="foo">'], [DirectiveAst, dirA, '<div [aProp]="foo">'],
+        [ElementAst, 'div', '<div [aProp]="foo"></div>'],
+        [DirectiveAst, dirA, '<div [aProp]="foo"></div>'],
         [BoundDirectivePropertyAst, 'aProp', 'foo', '[aProp]="foo"']
       ]);
     });

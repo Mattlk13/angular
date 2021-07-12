@@ -6,36 +6,25 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {Subject} from 'rxjs';
-
-import {Adapter, Context} from '../src/adapter';
+import {Adapter} from '../src/adapter';
 import {AssetGroupConfig, Manifest} from '../src/manifest';
 import {sha1} from '../src/sha1';
 
 import {MockCacheStorage} from './cache';
+import {MockClient, MockClients} from './clients';
+import {MockActivateEvent, MockExtendableMessageEvent, MockFetchEvent, MockInstallEvent, MockNotificationEvent, MockPushEvent} from './events';
 import {MockHeaders, MockRequest, MockResponse} from './fetch';
 import {MockServerState, MockServerStateBuilder} from './mock';
+import {normalizeUrl, parseUrl} from './utils';
 
 const EMPTY_SERVER_STATE = new MockServerStateBuilder().build();
 
-export class MockClient {
-  queue = new Subject<Object>();
-
-  constructor(readonly id: string) {}
-
-  readonly messages: Object[] = [];
-
-  postMessage(message: Object): void {
-    this.messages.push(message);
-    this.queue.next(message);
-  }
-}
-
 export class SwTestHarnessBuilder {
+  private origin = parseUrl(this.scopeUrl).origin;
   private server = EMPTY_SERVER_STATE;
   private caches = new MockCacheStorage(this.origin);
 
-  constructor(private origin = 'http://localhost/') {}
+  constructor(private scopeUrl = 'http://localhost/') {}
 
   withCacheState(cache: string): SwTestHarnessBuilder {
     this.caches = new MockCacheStorage(this.origin, cache);
@@ -48,44 +37,17 @@ export class SwTestHarnessBuilder {
   }
 
   build(): SwTestHarness {
-    return new SwTestHarness(this.server, this.caches, this.origin);
+    return new SwTestHarnessImpl(this.server, this.caches, this.scopeUrl) as SwTestHarness;
   }
 }
 
-export class MockClients implements Clients {
-  private clients = new Map<string, MockClient>();
+export type SwTestHarness = SwTestHarnessImpl&ServiceWorkerGlobalScope;
 
-  add(clientId: string): void {
-    if (this.clients.has(clientId)) {
-      return;
-    }
-    this.clients.set(clientId, new MockClient(clientId));
-  }
-
-  remove(clientId: string): void {
-    this.clients.delete(clientId);
-  }
-
-  async get(id: string): Promise<Client> {
-    return this.clients.get(id)! as any as Client;
-  }
-
-  getMock(id: string): MockClient|undefined {
-    return this.clients.get(id);
-  }
-
-  async matchAll(): Promise<Client[]> {
-    return Array.from(this.clients.values()) as any[] as Client[];
-  }
-
-  async claim(): Promise<any> {}
-}
-
-export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context {
-  readonly cacheNamePrefix: string;
+export class SwTestHarnessImpl extends Adapter<MockCacheStorage> implements
+    Partial<ServiceWorkerGlobalScope> {
   readonly clients = new MockClients();
-  private eventHandlers = new Map<string, Function>();
-  private skippedWaiting = true;
+  private eventHandlers = new Map<string, EventListener>();
+  private skippedWaiting = false;
 
   private selfMessageQueue: any[] = [];
   autoAdvanceTime = false;
@@ -98,7 +60,7 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
         this.selfMessageQueue.push(msg);
       },
     },
-    scope: this.origin,
+    scope: this.scopeUrl,
     showNotification:
         (title: string, options: Object) => {
           this.notifications.push({title, options});
@@ -109,23 +71,11 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
         },
   } as any;
 
-  static envIsSupported(): boolean {
-    if (typeof URL === 'function') {
-      return true;
-    }
-
-    // If we're in a browser that doesn't support URL at this point, don't go any further
-    // since browser builds use requirejs which will fail on the `require` call below.
-    if (typeof window !== 'undefined' && window) {
-      return false;
-    }
-
-    // In older Node.js versions, the `URL` global does not exist. We can use `url` instead.
-    const url = (typeof require === 'function') && require('url');
-    return url && (typeof url.parse === 'function') && (typeof url.resolve === 'function');
+  get time() {
+    return this.mockTime;
   }
 
-  time: number;
+  private mockTime = Date.now();
 
   private timers: {
     at: number,
@@ -134,11 +84,10 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     fired: boolean,
   }[] = [];
 
-  constructor(
-      private server: MockServerState, readonly caches: MockCacheStorage, private origin: string) {
-    const baseHref = this.parseUrl(origin).path;
-    this.cacheNamePrefix = 'ngsw:' + baseHref;
-    this.time = Date.now();
+  parseUrl = parseUrl;
+
+  constructor(private server: MockServerState, caches: MockCacheStorage, scopeUrl: string) {
+    super(scopeUrl, caches);
   }
 
   async resolveSelfMessages(): Promise<void> {
@@ -170,35 +119,45 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     }
     return skippedWaiting;
   }
+
   updateServerState(server?: MockServerState): void {
     this.server = server || EMPTY_SERVER_STATE;
   }
 
-  fetch(req: string|Request): Promise<Response> {
+  fetch(req: RequestInfo): Promise<Response> {
     if (typeof req === 'string') {
-      if (req.startsWith(this.origin)) {
-        req = '/' + req.substr(this.origin.length);
-      }
-      return this.server.fetch(new MockRequest(req));
+      return this.server.fetch(new MockRequest(normalizeUrl(req, this.scopeUrl)));
     } else {
       const mockReq = req.clone() as MockRequest;
-      if (mockReq.url.startsWith(this.origin)) {
-        mockReq.url = '/' + mockReq.url.substr(this.origin.length);
-      }
+      mockReq.url = normalizeUrl(mockReq.url, this.scopeUrl);
       return this.server.fetch(mockReq);
     }
   }
 
-  addEventListener(event: string, handler: Function): void {
-    this.eventHandlers.set(event, handler);
+  addEventListener(
+      type: string, listener: EventListenerOrEventListenerObject,
+      options?: boolean|AddEventListenerOptions): void {
+    if (options !== undefined) {
+      throw new Error('Mock `addEventListener()` does not support `options`.');
+    }
+
+    const handler: EventListener =
+        (typeof listener === 'function') ? listener : evt => listener.handleEvent(evt);
+    this.eventHandlers.set(type, handler);
   }
 
-  removeEventListener(event: string, handler?: Function): void {
-    this.eventHandlers.delete(event);
+  removeEventListener(
+      type: string, listener: EventListenerOrEventListenerObject,
+      options?: boolean|AddEventListenerOptions): void {
+    if (options !== undefined) {
+      throw new Error('Mock `removeEventListener()` does not support `options`.');
+    }
+
+    this.eventHandlers.delete(type);
   }
 
   newRequest(url: string, init: Object = {}): Request {
-    return new MockRequest(url, init);
+    return new MockRequest(normalizeUrl(url, this.scopeUrl), init);
   }
 
   newResponse(body: string, init: Object = {}): Response {
@@ -212,35 +171,24 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     }, new MockHeaders());
   }
 
-  parseUrl(url: string, relativeTo?: string): {origin: string, path: string, search: string} {
-    const parsedUrl: URL = (typeof URL === 'function') ?
-        (!relativeTo ? new URL(url) : new URL(url, relativeTo)) :
-        require('url').parse(require('url').resolve(relativeTo || '', url));
-
-    return {
-      origin: parsedUrl.origin || `${parsedUrl.protocol}//${parsedUrl.host}`,
-      path: parsedUrl.pathname,
-      search: parsedUrl.search || '',
-    };
-  }
-
   async skipWaiting(): Promise<void> {
     this.skippedWaiting = true;
   }
 
-  waitUntil(promise: Promise<void>): void {}
-
-  handleFetch(req: Request, clientId: string|null = null):
-      [Promise<Response|undefined>, Promise<void>] {
+  handleFetch(req: Request, clientId = ''): [Promise<Response|undefined>, Promise<void>] {
     if (!this.eventHandlers.has('fetch')) {
       throw new Error('No fetch handler registered');
     }
-    const event = new MockFetchEvent(req, clientId);
-    this.eventHandlers.get('fetch')!.call(this, event);
 
-    if (clientId) {
-      this.clients.add(clientId);
+    const isNavigation = req.mode === 'navigate';
+
+    if (clientId && !this.clients.getMock(clientId)) {
+      this.clients.add(clientId, isNavigation ? req.url : this.scopeUrl);
     }
+
+    const event = isNavigation ? new MockFetchEvent(req, '', clientId) :
+                                 new MockFetchEvent(req, clientId, '');
+    this.eventHandlers.get('fetch')!.call(this, event);
 
     return [event.response, event.ready];
   }
@@ -249,14 +197,15 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     if (!this.eventHandlers.has('message')) {
       throw new Error('No message handler registered');
     }
-    let event: MockMessageEvent;
-    if (clientId === null) {
-      event = new MockMessageEvent(data, null);
-    } else {
-      this.clients.add(clientId);
-      event = new MockMessageEvent(data, this.clients.getMock(clientId) || null);
+
+    if (clientId && !this.clients.getMock(clientId)) {
+      this.clients.add(clientId, this.scopeUrl);
     }
+
+    const event =
+        new MockExtendableMessageEvent(data, clientId && this.clients.getMock(clientId) || null);
     this.eventHandlers.get('message')!.call(this, event);
+
     return event.ready;
   }
 
@@ -281,7 +230,7 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
   timeout(ms: number): Promise<void> {
     const promise = new Promise<void>(resolve => {
       this.timers.push({
-        at: this.time + ms,
+        at: this.mockTime + ms,
         duration: ms,
         fn: resolve,
         fired: false,
@@ -296,9 +245,9 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
   }
 
   advance(by: number): void {
-    this.time += by;
+    this.mockTime += by;
     this.timers.filter(timer => !timer.fired)
-        .filter(timer => timer.at <= this.time)
+        .filter(timer => timer.at <= this.mockTime)
         .forEach(timer => {
           timer.fired = true;
           timer.fn();
@@ -357,64 +306,8 @@ export class ConfigBuilder {
       index: '/index.html',
       assetGroups,
       navigationUrls: [],
+      navigationRequestStrategy: 'performance',
       hashTable,
     };
   }
 }
-
-class OneTimeContext implements Context {
-  private queue: Promise<void>[] = [];
-
-  waitUntil(promise: Promise<void>): void {
-    this.queue.push(promise);
-  }
-
-  get ready(): Promise<void> {
-    return (async () => {
-      while (this.queue.length > 0) {
-        await this.queue.shift();
-      }
-    })();
-  }
-}
-
-class MockExtendableEvent extends OneTimeContext {}
-
-class MockFetchEvent extends MockExtendableEvent {
-  response: Promise<Response|undefined> = Promise.resolve(undefined);
-
-  constructor(readonly request: Request, readonly clientId: string|null) {
-    super();
-  }
-
-  respondWith(promise: Promise<Response>): Promise<Response> {
-    this.response = promise;
-    return promise;
-  }
-}
-
-class MockMessageEvent extends MockExtendableEvent {
-  constructor(readonly data: Object, readonly source: MockClient|null) {
-    super();
-  }
-}
-
-class MockPushEvent extends MockExtendableEvent {
-  constructor(private _data: Object) {
-    super();
-  }
-  data = {
-    json: () => this._data,
-  };
-}
-class MockNotificationEvent extends MockExtendableEvent {
-  constructor(private _notification: any, readonly action?: string) {
-    super();
-  }
-  readonly notification = {...this._notification, close: () => undefined};
-}
-
-class MockInstallEvent extends MockExtendableEvent {}
-
-
-class MockActivateEvent extends MockExtendableEvent {}

@@ -6,29 +6,45 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {Arguments, Argv} from 'yargs';
+import {Arguments, Argv, CommandModule} from 'yargs';
 
-import {error, red, yellow} from '../../utils/console';
+import {addGithubTokenOption} from '../../utils/git/github-yargs';
 
-import {GITHUB_TOKEN_GENERATE_URL, mergePullRequest} from './index';
+import {mergePullRequest} from './index';
 
-/** Builds the options for the merge command. */
-export function buildMergeCommand(yargs: Argv) {
-  return yargs.help().strict().option('github-token', {
-    type: 'string',
-    description: 'Github token. If not set, token is retrieved from the environment variables.'
-  });
+/** The options available to the merge command via CLI. */
+export interface MergeCommandOptions {
+  githubToken: string;
+  pr: number;
+  branchPrompt: boolean;
 }
 
-/** Handles the merge command. i.e. performs the merge of a specified pull request. */
-export async function handleMergeCommand(args: Arguments) {
-  const githubToken = args.githubToken || process.env.GITHUB_TOKEN || process.env.TOKEN;
-  if (!githubToken) {
-    error(red('No Github token set. Please set the `GITHUB_TOKEN` environment variable.'));
-    error(red('Alternatively, pass the `--github-token` command line flag.'));
-    error(yellow(`You can generate a token here: ${GITHUB_TOKEN_GENERATE_URL}`));
-    process.exit(1);
-  }
-
-  await mergePullRequest(args.prNumber, githubToken);
+/** Builds the command. */
+function builder(yargs: Argv) {
+  return addGithubTokenOption(yargs)
+      .help()
+      .strict()
+      .positional('pr', {
+        demandOption: true,
+        type: 'number',
+        description: 'The PR to be merged.',
+      })
+      .option('branch-prompt' as 'branchPrompt', {
+        type: 'boolean',
+        default: true,
+        description: 'Whether to prompt to confirm the branches a PR will merge into.',
+      });
 }
+
+/** Handles the command. */
+async function handler({pr, branchPrompt}: Arguments<MergeCommandOptions>) {
+  await mergePullRequest(pr, {branchPrompt});
+}
+
+/** yargs command module describing the command. */
+export const MergeCommandModule: CommandModule<{}, MergeCommandOptions> = {
+  handler,
+  builder,
+  command: 'merge <pr>',
+  describe: 'Merge a PR into its targeted branches.',
+};

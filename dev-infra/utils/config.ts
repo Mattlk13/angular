@@ -9,8 +9,8 @@
 import {existsSync} from 'fs';
 import {dirname, join} from 'path';
 
-import {error} from './console';
-import {exec} from './shelljs';
+import {debug, error} from './console';
+import {GitClient} from './git/git-client';
 import {isTsNodeAvailable} from './ts-node';
 
 /** Configuration for Git client interactions. */
@@ -21,6 +21,8 @@ export interface GitClientConfig {
   name: string;
   /** If SSH protocol should be used for git interactions. */
   useSsh?: boolean;
+  /** Whether the specified repository is private. */
+  private?: boolean;
 }
 
 /**
@@ -47,23 +49,35 @@ export type NgDevConfig<T = {}> = CommonConfig&T;
 const CONFIG_FILE_PATH = '.ng-dev/config';
 
 /** The configuration for ng-dev. */
-let CONFIG: {}|null = null;
+let cachedConfig: NgDevConfig|null = null;
+
+/**
+ * The filename expected for local user config, without the file extension to allow a typescript,
+ * javascript or json file to be used.
+ */
+const USER_CONFIG_FILE_PATH = '.ng-dev.user';
+
+/** The local user configuration for ng-dev. */
+let userConfig: {[key: string]: any}|null = null;
 
 /**
  * Get the configuration from the file system, returning the already loaded
  * copy if it is defined.
  */
-export function getConfig(): NgDevConfig {
+export function getConfig(): NgDevConfig;
+export function getConfig(baseDir?: string): NgDevConfig;
+export function getConfig(baseDir?: string): NgDevConfig {
   // If the global config is not defined, load it from the file system.
-  if (CONFIG === null) {
+  if (cachedConfig === null) {
+    baseDir = baseDir || GitClient.get().baseDir;
     // The full path to the configuration file.
-    const configPath = join(getRepoBaseDir(), CONFIG_FILE_PATH);
-    // Set the global config object.
-    CONFIG = readConfigFile(configPath);
+    const configPath = join(baseDir, CONFIG_FILE_PATH);
+    // Read the configuration and validate it before caching it for the future.
+    cachedConfig = validateCommonConfig(readConfigFile(configPath));
   }
-  // Return a clone of the global config to ensure that a new instance of the config is returned
-  // each time, preventing unexpected effects of modifications to the config object.
-  return validateCommonConfig({...CONFIG});
+  // Return a clone of the cached global config to ensure that a new instance of the config
+  // is returned each time, preventing unexpected effects of modifications to the config object.
+  return {...cachedConfig};
 }
 
 /** Validate the common configuration has been met for the ng-dev command. */
@@ -84,9 +98,12 @@ function validateCommonConfig(config: Partial<NgDevConfig>) {
   return config as NgDevConfig;
 }
 
-/** Resolves and reads the specified configuration file. */
-function readConfigFile(configPath: string): object {
-  // If the the `.ts` extension has not been set up already, and a TypeScript based
+/**
+ * Resolves and reads the specified configuration file, optionally returning an empty object if the
+ * configuration file cannot be read.
+ */
+function readConfigFile(configPath: string, returnEmptyObjectOnError = false): object {
+  // If the `.ts` extension has not been set up already, and a TypeScript based
   // version of the given configuration seems to exist, set up `ts-node` if available.
   if (require.extensions['.ts'] === undefined && existsSync(`${configPath}.ts`) &&
       isTsNodeAvailable()) {
@@ -101,7 +118,12 @@ function readConfigFile(configPath: string): object {
   try {
     return require(configPath);
   } catch (e) {
-    error('Could not read configuration file.');
+    if (returnEmptyObjectOnError) {
+      debug(`Could not read configuration file at ${configPath}, returning empty object instead.`);
+      debug(e);
+      return {};
+    }
+    error(`Could not read configuration file at ${configPath}.`);
     error(e);
     process.exit(1);
   }
@@ -122,14 +144,23 @@ export function assertNoErrors(errors: string[]) {
   process.exit(1);
 }
 
-/** Gets the path of the directory for the repository base. */
-export function getRepoBaseDir() {
-  const baseRepoDir = exec(`git rev-parse --show-toplevel`);
-  if (baseRepoDir.code) {
-    throw Error(
-        `Unable to find the path to the base directory of the repository.\n` +
-        `Was the command run from inside of the repo?\n\n` +
-        `ERROR:\n ${baseRepoDir.stderr}`);
+/**
+ * Get the local user configuration from the file system, returning the already loaded copy if it is
+ * defined.
+ *
+ * @returns The user configuration object, or an empty object if no user configuration file is
+ * present. The object is an untyped object as there are no required user configurations.
+ */
+export function getUserConfig() {
+  // If the global config is not defined, load it from the file system.
+  if (userConfig === null) {
+    const git = GitClient.get();
+    // The full path to the configuration file.
+    const configPath = join(git.baseDir, USER_CONFIG_FILE_PATH);
+    // Set the global config object.
+    userConfig = readConfigFile(configPath, true);
   }
-  return baseRepoDir.trim();
+  // Return a clone of the user config to ensure that a new instance of the config is returned
+  // each time, preventing unexpected effects of modifications to the config object.
+  return {...userConfig};
 }

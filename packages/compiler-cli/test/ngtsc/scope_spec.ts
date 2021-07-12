@@ -11,8 +11,8 @@ import * as ts from 'typescript';
 
 import {ErrorCode, ngErrorCode} from '../../src/ngtsc/diagnostics';
 import {runInEachFileSystem} from '../../src/ngtsc/file_system/testing';
+import {loadStandardTestFiles} from '../../src/ngtsc/testing';
 import {getTokenAtPosition} from '../../src/ngtsc/util/src/typescript';
-import {loadStandardTestFiles} from '../helpers/src/mock_file_loading';
 
 import {NgtscTestEnvironment} from './env';
 
@@ -50,10 +50,10 @@ runInEachFileSystem(() => {
 
         it('should detect when a declaration lives outside the current compilation', () => {
           env.write('dir.d.ts', `
-            import {ɵɵDirectiveDefWithMeta} from '@angular/core';
+            import {ɵɵDirectiveDeclaration} from '@angular/core';
 
             export declare class ExternalDir {
-              static ɵdir: ɵɵDirectiveDefWithMeta<ExternalDir, '[test]', never, never, never, never>;
+              static ɵdir: ɵɵDirectiveDeclaration<ExternalDir, '[test]', never, never, never, never>;
             }
           `);
           env.write('test.ts', `
@@ -174,7 +174,7 @@ runInEachFileSystem(() => {
           const dtsContents = env.getContents('test.d.ts');
           expect(dtsContents)
               .toContain(
-                  'static ɵmod: i0.ɵɵNgModuleDefWithMeta<TestModule, never, [typeof OtherModule], never>');
+                  'static ɵmod: i0.ɵɵNgModuleDeclaration<TestModule, never, [typeof OtherModule], never>');
         });
 
         it('should produce an error when an invalid class is imported', () => {
@@ -205,8 +205,10 @@ runInEachFileSystem(() => {
         `);
           const [error] = env.driveDiagnostics();
           expect(error).not.toBeUndefined();
-          expect(error.messageText).toContain('IsAModule');
-          expect(error.messageText).toContain('NgModule.imports');
+          const messageText = ts.flattenDiagnosticMessageText(error.messageText, '\n');
+          expect(messageText)
+              .toContain('Value at position 0 in the NgModule.imports of IsAModule is not a class');
+          expect(messageText).toContain('Value is a reference to \'NotAClass\'.');
           expect(error.code).toEqual(ngErrorCode(ErrorCode.VALUE_HAS_WRONG_TYPE));
           expect(diagnosticToNode(error, ts.isIdentifier).text).toEqual('NotAClass');
         });
@@ -235,7 +237,7 @@ runInEachFileSystem(() => {
           const dtsContents = env.getContents('test.d.ts');
           expect(dtsContents)
               .toContain(
-                  'static ɵmod: i0.ɵɵNgModuleDefWithMeta<TestModule, never, never, [typeof OtherModule]>');
+                  'static ɵmod: i0.ɵɵNgModuleDeclaration<TestModule, never, never, [typeof OtherModule]>');
         });
 
         it('should produce an error when a non-NgModule class is exported', () => {

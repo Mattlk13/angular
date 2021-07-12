@@ -14,7 +14,6 @@ import localeEn from '@angular/common/locales/en';
 import localeEsUS from '@angular/common/locales/es-US';
 import localeFr from '@angular/common/locales/fr';
 import {ɵregisterLocaleData, ɵunregisterLocaleData} from '@angular/core';
-import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testing_internal';
 
 {
   describe('Number pipes', () => {
@@ -50,8 +49,20 @@ import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testin
           expect(pipe.transform('1.1234')).toEqual('1.123');
         });
 
+        it('should return null for NaN', () => {
+          expect(pipe.transform(Number.NaN)).toEqual(null);
+        });
+
+        it('should return null for null', () => {
+          expect(pipe.transform(null)).toEqual(null);
+        });
+
+        it('should return null for undefined', () => {
+          expect(pipe.transform(undefined)).toEqual(null);
+        });
+
         it('should not support other objects', () => {
-          expect(() => pipe.transform({}))
+          expect(() => pipe.transform({} as any))
               .toThrowError(
                   `InvalidPipeArgument: '[object Object] is not a number' for pipe 'DecimalPipe'`);
           expect(() => pipe.transform('123abc'))
@@ -82,8 +93,20 @@ import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testin
           expect(pipe.transform(12.3456, '0.0-10')).toEqual('1,234.56%');
         });
 
+        it('should return null for NaN', () => {
+          expect(pipe.transform(Number.NaN)).toEqual(null);
+        });
+
+        it('should return null for null', () => {
+          expect(pipe.transform(null)).toEqual(null);
+        });
+
+        it('should return null for undefined', () => {
+          expect(pipe.transform(undefined)).toEqual(null);
+        });
+
         it('should not support other objects', () => {
-          expect(() => pipe.transform({}))
+          expect(() => pipe.transform({} as any))
               .toThrowError(
                   `InvalidPipeArgument: '[object Object] is not a number' for pipe 'PercentPipe'`);
         });
@@ -117,6 +140,11 @@ import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testin
           expect(pipe.transform(5.1234, 'DKK', '', '', 'da')).toEqual('5,12');
         });
 
+        it('should use the injected default currency code if none is provided', () => {
+          const clpPipe = new CurrencyPipe('en-US', 'CLP');
+          expect(clpPipe.transform(1234)).toEqual('CLP1,234');
+        });
+
         it('should support any currency code name', () => {
           // currency code is unknown, default formatting options will be used
           expect(pipe.transform(5.1234, 'unexisting_ISO_code', 'symbol'))
@@ -125,8 +153,20 @@ import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testin
           expect(pipe.transform(5.1234, 'USD', 'Custom name')).toEqual('Custom name5.12');
         });
 
+        it('should return null for NaN', () => {
+          expect(pipe.transform(Number.NaN)).toEqual(null);
+        });
+
+        it('should return null for null', () => {
+          expect(pipe.transform(null)).toEqual(null);
+        });
+
+        it('should return null for undefined', () => {
+          expect(pipe.transform(undefined)).toEqual(null);
+        });
+
         it('should not support other objects', () => {
-          expect(() => pipe.transform({}))
+          expect(() => pipe.transform({} as any))
               .toThrowError(
                   `InvalidPipeArgument: '[object Object] is not a number' for pipe 'CurrencyPipe'`);
         });

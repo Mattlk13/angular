@@ -14,18 +14,30 @@ load(
     "DEFAULT_NG_COMPILER",
     "DEFAULT_NG_XI18N",
     "DEPS_ASPECTS",
+    "LinkablePackageInfo",
     "NpmPackageInfo",
     "TsConfigInfo",
     "compile_ts",
     "js_ecma_script_module_info",
+    "js_module_info",
     "js_named_module_info",
     "node_modules_aspect",
     "ts_providers_dict_to_struct",
     "tsc_wrapped_tsconfig",
 )
 
+# enable_perf_logging controls whether Ivy's performance tracing system will be enabled for any
+# compilation which includes this provider.
+NgPerfInfo = provider(fields = ["enable_perf_logging"])
+
 _FLAT_DTS_FILE_SUFFIX = ".bundle.d.ts"
 _R3_SYMBOLS_DTS_FILE = "src/r3_symbols.d.ts"
+
+def is_perf_requested(ctx):
+    enable_perf_logging = ctx.attr.perf_flag != None and ctx.attr.perf_flag[NgPerfInfo].enable_perf_logging == True
+    if enable_perf_logging and not is_ivy_enabled(ctx):
+        fail("Angular View Engine does not support performance tracing")
+    return enable_perf_logging
 
 def is_ivy_enabled(ctx):
     """Determine if the ivy compiler should be used to by the ng_module.
@@ -45,14 +57,6 @@ def is_ivy_enabled(ctx):
     if ((hasattr(ctx.attr, "_renderer") and
          ctx.attr._renderer[BuildSettingInfo].value == "ivy")):
         return True
-
-    # TODO(josephperott): Remove after ~Feb 2020, to allow local script migrations
-    if "compile" in ctx.var and ctx.workspace_name == "angular":
-        fail(
-            msg = "Setting ViewEngine/Ivy using --define=compile is deprecated, please use " +
-                  "--config=ivy or --config=view-engine instead.",
-            attr = "ng_module",
-        )
 
     # This attribute is only defined in google's private ng_module rule and not
     # available externally. For external users, this is effectively a no-op.
@@ -136,11 +140,7 @@ def _should_produce_dts_bundle(ctx):
     Returns:
       true when we should produce bundled dts.
     """
-
-    # At the moment we cannot use this with ngtsc compiler since it emits
-    # import * as ___ from local modules which is not supported
-    # see: https://github.com/Microsoft/web-build-tools/issues/1029
-    return _is_view_engine_enabled(ctx) and getattr(ctx.attr, "bundle_dts", False)
+    return getattr(ctx.attr, "bundle_dts", False)
 
 def _should_produce_r3_symbols_bundle(ctx):
     """Should we produce r3_symbols bundle.
@@ -284,6 +284,15 @@ def _expected_outs(ctx):
     else:
         i18n_messages_files = []
 
+    dev_perf_files = []
+    prod_perf_files = []
+
+    # In Ivy mode, dev and prod builds both produce a .json output containing performance metrics
+    # from the compiler for that build.
+    if is_perf_requested(ctx):
+        dev_perf_files = [ctx.actions.declare_file(ctx.label.name + "_perf_dev.json")]
+        prod_perf_files = [ctx.actions.declare_file(ctx.label.name + "_perf_prod.json")]
+
     return struct(
         closure_js = closure_js_files,
         devmode_js = devmode_js_files,
@@ -294,6 +303,8 @@ def _expected_outs(ctx):
         dts_bundles = dts_bundles,
         bundle_index_typings = bundle_index_typings,
         i18n_messages = i18n_messages_files,
+        dev_perf_files = dev_perf_files,
+        prod_perf_files = prod_perf_files,
     )
 
 # Determines if we need to generate View Engine shims (.ngfactory and .ngsummary files)
@@ -324,6 +335,7 @@ def _ngc_tsconfig(ctx, files, srcs, **kwargs):
         # Summaries are only enabled if Angular outputs are to be produced.
         "enableSummariesForJit": is_legacy_ngc,
         "enableIvy": is_ivy_enabled(ctx),
+        "compilationMode": ctx.attr.compilation_mode,
         "fullTemplateTypeCheck": ctx.attr.type_check,
         # In Google3 we still want to use the symbol factory re-exports in order to
         # not break existing apps inside Google. Unlike Bazel, Google3 does not only
@@ -342,6 +354,15 @@ def _ngc_tsconfig(ctx, files, srcs, **kwargs):
         "_useManifestPathsAsModuleName": (not _is_bazel()),
     }
 
+    if is_perf_requested(ctx):
+        # In Ivy mode, set the `tracePerformance` Angular compiler option to enable performance
+        # metric output.
+        if "devmode_manifest" in kwargs:
+            perf_path = outs.dev_perf_files[0].path
+        else:
+            perf_path = outs.prod_perf_files[0].path
+        angular_compiler_options["tracePerformance"] = perf_path
+
     if _should_produce_flat_module_outs(ctx):
         angular_compiler_options["flatModuleId"] = ctx.attr.module_name
         angular_compiler_options["flatModuleOutFile"] = _flat_module_out_file(ctx)
@@ -353,8 +374,11 @@ def _ngc_tsconfig(ctx, files, srcs, **kwargs):
         "angularCompilerOptions": angular_compiler_options,
     })
 
+def _has_target_angular_summaries(target):
+    return hasattr(target, "angular") and hasattr(target.angular, "summaries")
+
 def _collect_summaries_aspect_impl(target, ctx):
-    results = depset(target.angular.summaries if hasattr(target, "angular") else [])
+    results = depset(target.angular.summaries if _has_target_angular_summaries(target) else [])
 
     # If we are visiting empty-srcs ts_library, this is a re-export
     srcs = ctx.rule.attr.srcs if hasattr(ctx.rule.attr, "srcs") else []
@@ -362,7 +386,7 @@ def _collect_summaries_aspect_impl(target, ctx):
     # "re-export" rules should expose all the files of their deps
     if not srcs and hasattr(ctx.rule.attr, "deps"):
         for dep in ctx.rule.attr.deps:
-            if (hasattr(dep, "angular")):
+            if (_has_target_angular_summaries(dep)):
                 results = depset(dep.angular.summaries, transitive = [results])
 
     return struct(collect_summaries_aspect_result = results)
@@ -522,6 +546,7 @@ def _compile_action(
         outputs,
         dts_bundles_out,
         messages_out,
+        perf_out,
         tsconfig_file,
         node_opts,
         compile_mode):
@@ -566,12 +591,12 @@ def _compile_action(
 
 def _prodmode_compile_action(ctx, inputs, outputs, tsconfig_file, node_opts):
     outs = _expected_outs(ctx)
-    return _compile_action(ctx, inputs, outputs + outs.closure_js, None, outs.i18n_messages, tsconfig_file, node_opts, "prodmode")
+    return _compile_action(ctx, inputs, outputs + outs.closure_js + outs.prod_perf_files, None, outs.i18n_messages, outs.prod_perf_files, tsconfig_file, node_opts, "prodmode")
 
 def _devmode_compile_action(ctx, inputs, outputs, tsconfig_file, node_opts):
     outs = _expected_outs(ctx)
-    compile_action_outputs = outputs + outs.devmode_js + outs.declarations + outs.summaries + outs.metadata
-    _compile_action(ctx, inputs, compile_action_outputs, outs.dts_bundles, None, tsconfig_file, node_opts, "devmode")
+    compile_action_outputs = outputs + outs.devmode_js + outs.declarations + outs.summaries + outs.metadata + outs.dev_perf_files
+    _compile_action(ctx, inputs, compile_action_outputs, outs.dts_bundles, None, outs.dev_perf_files, tsconfig_file, node_opts, "devmode")
 
 def _ts_expected_outs(ctx, label, srcs_files = []):
     # rules_typescript expects a function with two or more arguments, but our
@@ -607,20 +632,23 @@ def ng_module_impl(ctx, ts_compile_actions):
 
     outs = _expected_outs(ctx)
 
+    providers["angular"] = {}
+
     if is_legacy_ngc:
-        providers["angular"] = {
-            "summaries": outs.summaries,
-            "metadata": outs.metadata,
-        }
+        providers["angular"]["summaries"] = outs.summaries
+        providers["angular"]["metadata"] = outs.metadata
         providers["ngc_messages"] = outs.i18n_messages
 
-    if is_legacy_ngc and _should_produce_flat_module_outs(ctx):
-        if len(outs.metadata) > 1:
+    if _should_produce_flat_module_outs(ctx):
+        # Sanity error if more than one metadata file has been created in the
+        # legacy ngc compiler while a flat module should be produced.
+        if is_legacy_ngc and len(outs.metadata) > 1:
             fail("expecting exactly one metadata output for " + str(ctx.label))
 
         providers["angular"]["flat_module_metadata"] = struct(
             module_name = ctx.attr.module_name,
-            metadata_file = outs.metadata[0],
+            # Metadata files are only generated in the legacy ngc compiler.
+            metadata_file = outs.metadata[0] if is_legacy_ngc else None,
             typings_file = outs.bundle_index_typings,
             flat_module_out_file = _flat_module_out_file(ctx),
         )
@@ -637,6 +665,10 @@ def _ng_module_impl(ctx):
     # See design doc https://docs.google.com/document/d/1ggkY5RqUkVL4aQLYm7esRW978LgX3GUCnQirrk5E1C0/edit#
     # and issue https://github.com/bazelbuild/rules_nodejs/issues/57 for more details.
     ts_providers["providers"].extend([
+        js_module_info(
+            sources = ts_providers["typescript"]["es5_sources"],
+            deps = ctx.attr.deps,
+        ),
         js_named_module_info(
             sources = ts_providers["typescript"]["es5_sources"],
             deps = ctx.attr.deps,
@@ -650,21 +682,22 @@ def _ng_module_impl(ctx):
         # once it is no longer needed.
     ])
 
+    if ctx.attr.package_name:
+        path = "/".join([p for p in [ctx.bin_dir.path, ctx.label.workspace_root, ctx.label.package] if p])
+        ts_providers["providers"].append(LinkablePackageInfo(
+            package_name = ctx.attr.package_name,
+            package_path = ctx.attr.package_path,
+            path = path,
+            files = ts_providers["typescript"]["es5_sources"],
+        ))
+
     return ts_providers_dict_to_struct(ts_providers)
-
-local_deps_aspects = [node_modules_aspect, _collect_summaries_aspect]
-
-# Workaround skydoc bug which assumes DEPS_ASPECTS is a str type
-[local_deps_aspects.append(a) for a in DEPS_ASPECTS]
 
 NG_MODULE_ATTRIBUTES = {
     "srcs": attr.label_list(allow_files = [".ts"]),
-
-    # Note: DEPS_ASPECTS is already a list, we add the cast to workaround
-    # https://github.com/bazelbuild/skydoc/issues/21
     "deps": attr.label_list(
         doc = "Targets that are imported by this target",
-        aspects = local_deps_aspects,
+        aspects = [node_modules_aspect, _collect_summaries_aspect] + DEPS_ASPECTS,
     ),
     "assets": attr.label_list(
         doc = ".html and .css files needed by the Angular compiler",
@@ -681,16 +714,21 @@ NG_MODULE_ATTRIBUTES = {
     "filter_summaries": attr.bool(default = False),
     "type_check": attr.bool(default = True),
     "inline_resources": attr.bool(default = True),
+    "compilation_mode": attr.string(
+        doc = """Set the compilation mode for the Angular compiler.
+
+        This attribute is a noop if Ivy is not enabled.
+        """,
+        values = ["partial", "full", ""],
+        default = "",
+    ),
     "no_i18n": attr.bool(default = False),
     "compiler": attr.label(
         doc = """Sets a different ngc compiler binary to use for this library.
 
-        The default ngc compiler depends on the `@npm//@angular/bazel`
+        The default ngc compiler depends on the `//@angular/bazel`
         target which is setup for projects that use bazel managed npm deps that
-        fetch the @angular/bazel npm package. It is recommended that you use
-        the workspace name `@npm` for bazel managed deps so the default
-        compiler works out of the box. Otherwise, you'll have to override
-        the compiler attribute manually.
+        fetch the @angular/bazel npm package.
         """,
         default = Label(DEFAULT_NG_COMPILER),
         executable = True,
@@ -701,7 +739,33 @@ NG_MODULE_ATTRIBUTES = {
         executable = True,
         cfg = "host",
     ),
+    # In the angular/angular monorepo, //tools:defaults.bzl wraps the ng_module rule in a macro
+    # which sets this attribute to the //packages/compiler-cli:ng_perf flag.
+    # This is done to avoid exposing the flag to user projects, which would require:
+    # * defining the flag within @angular/bazel and referencing it correctly here, and
+    # * committing to the flag and its semantics (including the format of perf JSON files)
+    #   as something users can depend upon.
+    "perf_flag": attr.label(
+        providers = [NgPerfInfo],
+        doc = "Private API to control production of performance metric JSON files",
+    ),
     "_supports_workers": attr.bool(default = True),
+
+    # Matches the API of the `ts_library` rule from `@bazel/typescript`.
+    # https://github.com/bazelbuild/rules_nodejs/blob/398d351a3f2a9b2ebf6fc31fb5882cce7eedfd7b/packages/typescript/internal/build_defs.bzl#L435-L446.
+    "package_name": attr.string(
+        doc = """The package name that the linker will link this `ng_module` output as.
+    If `package_path` is set, the linker will link this package under `<package_path>/node_modules/<package_name>`.
+    If `package_path` is not set, the package will be linked in the top-level workspace node_modules folder.""",
+    ),
+
+    # Matches the API of the `ts_library` rule from `@bazel/typescript`.
+    # https://github.com/bazelbuild/rules_nodejs/blob/398d351a3f2a9b2ebf6fc31fb5882cce7eedfd7b/packages/typescript/internal/build_defs.bzl#L435-L446.
+    "package_path": attr.string(
+        doc = """The package path in the workspace that the linker will link this `ng_module` output to.
+    If `package_path` is set, the linker will link this package under `<package_path>/node_modules/<package_name>`.
+    If `package_path` is not set, the package will be linked in the top-level workspace node_modules folder.""",
+    ),
 }
 
 NG_MODULE_RULE_ATTRS = dict(dict(COMMON_ATTRIBUTES, **NG_MODULE_ATTRIBUTES), **{
@@ -709,14 +773,11 @@ NG_MODULE_RULE_ATTRS = dict(dict(COMMON_ATTRIBUTES, **NG_MODULE_ATTRIBUTES), **{
     "node_modules": attr.label(
         doc = """The npm packages which should be available during the compile.
 
-        The default value of `@npm//typescript:typescript__typings` is
-        for projects that use bazel managed npm deps. It is recommended
-        that you use the workspace name `@npm` for bazel managed deps so the
-        default value works out of the box. Otherwise, you'll have to
-        override the node_modules attribute manually. This default is in place
+        The default value of `//typescript:typescript__typings` is
+        for projects that use bazel managed npm deps. This default is in place
         since code compiled by ng_module will always depend on at least the
         typescript default libs which are provided by
-        `@npm//typescript:typescript__typings`.
+        `//typescript:typescript__typings`.
 
         This attribute is DEPRECATED. As of version 0.18.0 the recommended
         approach to npm dependencies is to use fine grained npm dependencies
@@ -768,7 +829,12 @@ NG_MODULE_RULE_ATTRS = dict(dict(COMMON_ATTRIBUTES, **NG_MODULE_ATTRIBUTES), **{
           yarn_lock = "//:yarn.lock",
         )
         """,
-        default = Label("@npm//typescript:typescript__typings"),
+        default = Label(
+            # BEGIN-DEV-ONLY
+            "@npm" +
+            # END-DEV-ONLY
+            "//typescript:typescript__typings",
+        ),
     ),
     "entry_point": attr.label(allow_single_file = True),
 
@@ -800,7 +866,7 @@ Run the Angular AOT template compiler.
 
 This rule extends the [ts_library] rule.
 
-[ts_library]: http://tsetse.info/api/build_defs.html#ts_library
+[ts_library]: https://bazelbuild.github.io/rules_nodejs/TypeScript.html#ts_library
 """
 
 def ng_module_macro(tsconfig = None, **kwargs):

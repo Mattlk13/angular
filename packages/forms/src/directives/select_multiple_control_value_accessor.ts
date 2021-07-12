@@ -8,7 +8,7 @@
 
 import {Directive, ElementRef, forwardRef, Host, Input, OnDestroy, Optional, Renderer2, StaticProvider} from '@angular/core';
 
-import {ControlValueAccessor, NG_VALUE_ACCESSOR} from './control_value_accessor';
+import {BuiltInControlValueAccessor, ControlValueAccessor, NG_VALUE_ACCESSOR} from './control_value_accessor';
 
 export const SELECT_MULTIPLE_VALUE_ACCESSOR: StaticProvider = {
   provide: NG_VALUE_ACCESSOR,
@@ -81,29 +81,19 @@ abstract class HTMLCollection {
   host: {'(change)': 'onChange($event.target)', '(blur)': 'onTouched()'},
   providers: [SELECT_MULTIPLE_VALUE_ACCESSOR]
 })
-export class SelectMultipleControlValueAccessor implements ControlValueAccessor {
+export class SelectMultipleControlValueAccessor extends BuiltInControlValueAccessor implements
+    ControlValueAccessor {
   /**
-   * @description
-   * The current value
+   * The current value.
+   * @nodoc
    */
   value: any;
 
   /** @internal */
   _optionMap: Map<string, ɵNgSelectMultipleOption> = new Map<string, ɵNgSelectMultipleOption>();
+
   /** @internal */
   _idCounter: number = 0;
-
-  /**
-   * @description
-   * The registered callback function called when a change event occurs on the input element.
-   */
-  onChange = (_: any) => {};
-
-  /**
-   * @description
-   * The registered callback function called when a blur event occurs on the input element.
-   */
-  onTouched = () => {};
 
   /**
    * @description
@@ -112,7 +102,7 @@ export class SelectMultipleControlValueAccessor implements ControlValueAccessor 
    */
   @Input()
   set compareWith(fn: (o1: any, o2: any) => boolean) {
-    if (typeof fn !== 'function') {
+    if (typeof fn !== 'function' && (typeof ngDevMode === 'undefined' || ngDevMode)) {
       throw new Error(`compareWith must be a function, but received ${JSON.stringify(fn)}`);
     }
     this._compareWith = fn;
@@ -120,14 +110,9 @@ export class SelectMultipleControlValueAccessor implements ControlValueAccessor 
 
   private _compareWith: (o1: any, o2: any) => boolean = Object.is;
 
-  constructor(private _renderer: Renderer2, private _elementRef: ElementRef) {}
-
   /**
-   * @description
-   * Sets the "value" property on one or of more
-   * of the select's options.
-   *
-   * @param value The value
+   * Sets the "value" property on one or of more of the select's options.
+   * @nodoc
    */
   writeValue(value: any): void {
     this.value = value;
@@ -147,16 +132,14 @@ export class SelectMultipleControlValueAccessor implements ControlValueAccessor 
   }
 
   /**
-   * @description
    * Registers a function called when the control value changes
    * and writes an array of the selected options.
-   *
-   * @param fn The callback function
+   * @nodoc
    */
   registerOnChange(fn: (value: any) => any): void {
     this.onChange = (_: any) => {
       const selected: Array<any> = [];
-      if (_.hasOwnProperty('selectedOptions')) {
+      if (_.selectedOptions !== undefined) {
         const options: HTMLCollection = _.selectedOptions;
         for (let i = 0; i < options.length; i++) {
           const opt: any = options.item(i);
@@ -178,25 +161,6 @@ export class SelectMultipleControlValueAccessor implements ControlValueAccessor 
       this.value = selected;
       fn(selected);
     };
-  }
-
-  /**
-   * @description
-   * Registers a function called when the control is touched.
-   *
-   * @param fn The callback function
-   */
-  registerOnTouched(fn: () => any): void {
-    this.onTouched = fn;
-  }
-
-  /**
-   * Sets the "disabled" property on the select input element.
-   *
-   * @param isDisabled The disabled value
-   */
-  setDisabledState(isDisabled: boolean): void {
-    this._renderer.setProperty(this._elementRef.nativeElement, 'disabled', isDisabled);
   }
 
   /** @internal */
@@ -285,10 +249,7 @@ export class ɵNgSelectMultipleOption implements OnDestroy {
     this._renderer.setProperty(this._element.nativeElement, 'selected', selected);
   }
 
-  /**
-   * @description
-   * Lifecycle method called before the directive's instance is destroyed. For internal use only.
-   */
+  /** @nodoc */
   ngOnDestroy(): void {
     if (this._select) {
       this._select._optionMap.delete(this.id);

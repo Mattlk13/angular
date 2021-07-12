@@ -69,7 +69,7 @@ function loadTourOfHeroes(): ReadonlyMap<string, string> {
         const value = fs.readFileSync(absPath, 'utf8');
         files.set(key, value);
       } else {
-        const key = path.join('/', filePath);
+        const key = path.join('/', path.relative(root, absPath));
         files.set(key, '[[directory]]');
         dirs.push(absPath);
       }
@@ -134,7 +134,8 @@ export class MockTypescriptHost implements ts.LanguageServiceHost {
    */
   overrideInlineTemplate(fileName: string, content: string): string {
     const originalContent = this.getRawFileContent(fileName)!;
-    const newContent = originalContent.replace(/template: `([\s\S]+)`/, `template: \`${content}\``);
+    const newContent =
+        originalContent.replace(/template: `([\s\S]+?)`/, `template: \`${content}\``);
     return this.override(fileName, newContent);
   }
 
@@ -188,7 +189,7 @@ export class MockTypescriptHost implements ts.LanguageServiceHost {
     if (this.overrideDirectory.has(directoryName)) return true;
     const effectiveName = this.getEffectiveName(directoryName);
     if (effectiveName === directoryName) {
-      return TOH.has(directoryName);
+      return TOH.get(directoryName) === '[[directory]]';
     }
     if (effectiveName === '/' + this.node_modules) {
       return true;

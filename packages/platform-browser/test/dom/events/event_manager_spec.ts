@@ -8,7 +8,6 @@
 
 import {ɵgetDOM as getDOM} from '@angular/common';
 import {NgZone} from '@angular/core/src/zone/ng_zone';
-import {beforeEach, describe, expect, it} from '@angular/core/testing/src/testing_internal';
 import {DomEventsPlugin} from '@angular/platform-browser/src/dom/events/dom_events';
 import {EventManager, EventManagerPlugin} from '@angular/platform-browser/src/dom/events/event_manager';
 import {createMouseEvent, el} from '../../../testing/src/browser_util';
@@ -21,7 +20,7 @@ let zone: NgZone;
 
 describe('EventManager', () => {
   beforeEach(() => {
-    doc = getDOM().supportsDOMEvents() ? document : getDOM().createHtmlDocument();
+    doc = getDOM().supportsDOMEvents ? document : getDOM().createHtmlDocument();
     zone = new NgZone({});
     domEventPlugin = new DomEventsPlugin(doc);
   });
@@ -311,7 +310,7 @@ describe('EventManager', () => {
     expect(receivedEvents).toEqual([]);
   });
 
-  it('should run blackListedEvents handler outside of ngZone', () => {
+  it('should run unpatchedEvents handler outside of ngZone', () => {
     const Zone = (window as any)['Zone'];
     const element = el('<div><div></div></div>');
     doc.body.appendChild(element);
@@ -335,45 +334,83 @@ describe('EventManager', () => {
     expect(receivedEvent).toBe(null);
   });
 
-  it('should only trigger one Change detection when bubbling', (done: DoneFn) => {
-    doc = getDOM().supportsDOMEvents() ? document : getDOM().createHtmlDocument();
-    zone = new NgZone({shouldCoalesceEventChangeDetection: true});
-    domEventPlugin = new DomEventsPlugin(doc);
-    const element = el('<div></div>');
-    const child = el('<div></div>');
-    element.appendChild(child);
-    doc.body.appendChild(element);
-    const dispatchedEvent = createMouseEvent('click');
-    let receivedEvents: any = [];
-    let stables: any = [];
-    const handler = (e: any) => {
-      receivedEvents.push(e);
-    };
-    const manager = new EventManager([domEventPlugin], zone);
-    let removerChild: any;
-    let removerParent: any;
+  it('should only trigger one Change detection when bubbling with shouldCoalesceEventChangeDetection = true',
+     (done: DoneFn) => {
+       doc = getDOM().supportsDOMEvents ? document : getDOM().createHtmlDocument();
+       zone = new NgZone({shouldCoalesceEventChangeDetection: true});
+       domEventPlugin = new DomEventsPlugin(doc);
+       const element = el('<div></div>');
+       const child = el('<div></div>');
+       element.appendChild(child);
+       doc.body.appendChild(element);
+       const dispatchedEvent = createMouseEvent('click');
+       let receivedEvents: any = [];
+       let stables: any = [];
+       const handler = (e: any) => {
+         receivedEvents.push(e);
+       };
+       const manager = new EventManager([domEventPlugin], zone);
+       let removerChild: any;
+       let removerParent: any;
 
-    zone.run(() => {
-      removerChild = manager.addEventListener(child, 'click', handler);
-      removerParent = manager.addEventListener(element, 'click', handler);
-    });
-    zone.onStable.subscribe((isStable: any) => {
-      stables.push(isStable);
-    });
-    getDOM().dispatchEvent(child, dispatchedEvent);
-    requestAnimationFrame(() => {
-      expect(receivedEvents.length).toBe(2);
-      expect(stables.length).toBe(1);
+       zone.run(() => {
+         removerChild = manager.addEventListener(child, 'click', handler);
+         removerParent = manager.addEventListener(element, 'click', handler);
+       });
+       zone.onStable.subscribe((isStable: any) => {
+         stables.push(isStable);
+       });
+       getDOM().dispatchEvent(child, dispatchedEvent);
+       requestAnimationFrame(() => {
+         expect(receivedEvents.length).toBe(2);
+         expect(stables.length).toBe(1);
 
-      removerChild && removerChild();
-      removerParent && removerParent();
-      done();
-    });
-  });
+         removerChild && removerChild();
+         removerParent && removerParent();
+         done();
+       });
+     });
+
+  it('should only trigger one Change detection when bubbling with shouldCoalesceRunChangeDetection = true',
+     (done: DoneFn) => {
+       doc = getDOM().supportsDOMEvents ? document : getDOM().createHtmlDocument();
+       zone = new NgZone({shouldCoalesceRunChangeDetection: true});
+       domEventPlugin = new DomEventsPlugin(doc);
+       const element = el('<div></div>');
+       const child = el('<div></div>');
+       element.appendChild(child);
+       doc.body.appendChild(element);
+       const dispatchedEvent = createMouseEvent('click');
+       let receivedEvents: any = [];
+       let stables: any = [];
+       const handler = (e: any) => {
+         receivedEvents.push(e);
+       };
+       const manager = new EventManager([domEventPlugin], zone);
+       let removerChild: any;
+       let removerParent: any;
+
+       zone.run(() => {
+         removerChild = manager.addEventListener(child, 'click', handler);
+         removerParent = manager.addEventListener(element, 'click', handler);
+       });
+       zone.onStable.subscribe((isStable: any) => {
+         stables.push(isStable);
+       });
+       getDOM().dispatchEvent(child, dispatchedEvent);
+       requestAnimationFrame(() => {
+         expect(receivedEvents.length).toBe(2);
+         expect(stables.length).toBe(1);
+
+         removerChild && removerChild();
+         removerParent && removerParent();
+         done();
+       });
+     });
 
   it('should not drain micro tasks queue too early with shouldCoalesceEventChangeDetection=true',
      (done: DoneFn) => {
-       doc = getDOM().supportsDOMEvents() ? document : getDOM().createHtmlDocument();
+       doc = getDOM().supportsDOMEvents ? document : getDOM().createHtmlDocument();
        zone = new NgZone({shouldCoalesceEventChangeDetection: true});
        domEventPlugin = new DomEventsPlugin(doc);
        const element = el('<div></div>');
@@ -398,13 +435,59 @@ describe('EventManager', () => {
          removerChildFocus = manager.addEventListener(child, 'blur', blurHandler);
        });
        const sub = zone.onStable.subscribe(() => {
+         sub.unsubscribe();
          logs.push('begin');
          Promise.resolve().then(() => {
            logs.push('promise resolved');
          });
          element.appendChild(child);
          getDOM().dispatchEvent(child, dispatchedBlurEvent);
+         logs.push('end');
+       });
+       getDOM().dispatchEvent(element, dispatchedClickEvent);
+       requestAnimationFrame(() => {
+         expect(logs).toEqual(['begin', 'blur', 'end', 'promise resolved']);
+
+         removerParent && removerParent();
+         removerChildFocus && removerChildFocus();
+         done();
+       });
+     });
+
+  it('should not drain micro tasks queue too early with shouldCoalesceRunChangeDetection=true',
+     (done: DoneFn) => {
+       doc = getDOM().supportsDOMEvents ? document : getDOM().createHtmlDocument();
+       zone = new NgZone({shouldCoalesceRunChangeDetection: true});
+       domEventPlugin = new DomEventsPlugin(doc);
+       const element = el('<div></div>');
+       const child = el('<div></div>');
+       doc.body.appendChild(element);
+       const dispatchedClickEvent = createMouseEvent('click');
+       const dispatchedBlurEvent: FocusEvent =
+           getDOM().getDefaultDocument().createEvent('FocusEvent');
+       dispatchedBlurEvent.initEvent('blur', true, true);
+       let logs: any = [];
+       const handler = () => {};
+
+       const blurHandler = (e: any) => {
+         logs.push('blur');
+       };
+       const manager = new EventManager([domEventPlugin], zone);
+       let removerParent: any;
+       let removerChildFocus: any;
+
+       zone.run(() => {
+         removerParent = manager.addEventListener(element, 'click', handler);
+         removerChildFocus = manager.addEventListener(child, 'blur', blurHandler);
+       });
+       const sub = zone.onStable.subscribe(() => {
          sub.unsubscribe();
+         logs.push('begin');
+         Promise.resolve().then(() => {
+           logs.push('promise resolved');
+         });
+         element.appendChild(child);
+         getDOM().dispatchEvent(child, dispatchedBlurEvent);
          logs.push('end');
        });
        getDOM().dispatchEvent(element, dispatchedClickEvent);

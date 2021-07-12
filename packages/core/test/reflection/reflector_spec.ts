@@ -201,6 +201,51 @@ class TestObj {
         expect(isDelegateCtor(ChildWithCtor.toString())).toBe(false);
       });
 
+      // See: https://github.com/angular/angular/issues/38453
+      it('should support ES2015 downleveled classes (workspace TypeScript version) (downlevelIteration=true)',
+         () => {
+           const {ChildNoCtor, ChildNoCtorPrivateProps, ChildWithCtor} =
+               require('./es5_downleveled_inheritance_fixture');
+
+           expect(isDelegateCtor(ChildNoCtor.toString())).toBe(true);
+           expect(isDelegateCtor(ChildNoCtorPrivateProps.toString())).toBe(true);
+           expect(isDelegateCtor(ChildWithCtor.toString())).toBe(false);
+         });
+
+      it('should support ES2015 downleveled classes (<TS4.2) (downlevelIteration=true)', () => {
+        const ChildNoCtor = `function ChildNoCtor() {
+          return _super !== null && _super.apply(this, arguments) || this;
+        }`;
+        const ChildNoCtorPrivateProps = `function ChildNoCtorPrivateProps() {
+          var _this = _super.apply(this, __spread(arguments)) || this;
+          _this.x = 10;
+          return _this;
+        }`;
+        const ChildWithCtor = `function ChildWithCtor() {
+          return _super.call(this) || this;
+        }`;
+        expect(isDelegateCtor(ChildNoCtor)).toBe(true);
+        expect(isDelegateCtor(ChildNoCtorPrivateProps)).toBe(true);
+        expect(isDelegateCtor(ChildWithCtor)).toBe(false);
+      });
+
+      it('should support ES2015 downleveled classes (>=TS4.2) (downlevelIteration=true)', () => {
+        const ChildNoCtor = `function ChildNoCtor() {
+          return _super !== null && _super.apply(this, arguments) || this;
+        }`;
+        const ChildNoCtorPrivateProps = `function ChildNoCtorPrivateProps() {
+          var _this = _super.apply(this, __spreadArray([], __read(arguments))) || this;
+          _this.x = 10;
+          return _this;
+        }`;
+        const ChildWithCtor = `function ChildWithCtor() {
+          return _super.call(this) || this;
+        }`;
+        expect(isDelegateCtor(ChildNoCtor)).toBe(true);
+        expect(isDelegateCtor(ChildNoCtorPrivateProps)).toBe(true);
+        expect(isDelegateCtor(ChildWithCtor)).toBe(false);
+      });
+
       it('should support ES2015 classes when minified', () => {
         // These classes are ES2015 in minified form
         const ChildNoCtorMinified = 'class ChildNoCtor extends Parent{}';

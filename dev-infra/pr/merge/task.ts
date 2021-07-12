@@ -7,17 +7,15 @@
  */
 
 import {promptConfirm} from '../../utils/console';
-import {GitClient, GitCommandError} from '../../utils/git';
+import {AuthenticatedGitClient} from '../../utils/git/authenticated-git-client';
+import {GitCommandError} from '../../utils/git/git-client';
 
 import {MergeConfigWithRemote} from './config';
 import {PullRequestFailure} from './failures';
-import {getCaretakerNotePromptMessage} from './messages';
+import {getCaretakerNotePromptMessage, getTargettedBranchesConfirmationPromptMessage} from './messages';
 import {isPullRequest, loadAndValidatePullRequest,} from './pull-request';
 import {GithubApiMergeStrategy} from './strategies/api-merge';
 import {AutosquashMergeStrategy} from './strategies/autosquash-merge';
-
-/** Github OAuth scopes required for the merge task. */
-const REQUIRED_SCOPES = ['repo'];
 
 /** Describes the status of a pull request merge. */
 export const enum MergeStatus {
@@ -37,18 +35,28 @@ export interface MergeResult {
   failure?: PullRequestFailure;
 }
 
+export interface PullRequestMergeTaskFlags {
+  branchPrompt: boolean;
+}
+
+const defaultPullRequestMergeTaskFlags: PullRequestMergeTaskFlags = {
+  branchPrompt: true,
+};
+
 /**
  * Class that accepts a merge script configuration and Github token. It provides
  * a programmatic interface for merging multiple pull requests based on their
  * labels that have been resolved through the merge script configuration.
  */
 export class PullRequestMergeTask {
-  /** Git client that can be used to execute Git commands. */
-  git = new GitClient(this._githubToken, {github: this.config.remote});
+  private flags: PullRequestMergeTaskFlags;
 
   constructor(
-      public projectRoot: string, public config: MergeConfigWithRemote,
-      private _githubToken: string) {}
+      public config: MergeConfigWithRemote, public git: AuthenticatedGitClient,
+      flags: Partial<PullRequestMergeTaskFlags>) {
+    // Update flags property with the provided flags values as patches to the default flag values.
+    this.flags = {...defaultPullRequestMergeTaskFlags, ...flags};
+  }
 
   /**
    * Merges the given pull request and pushes it upstream.
@@ -56,8 +64,28 @@ export class PullRequestMergeTask {
    * @param force Whether non-critical pull request failures should be ignored.
    */
   async merge(prNumber: number, force = false): Promise<MergeResult> {
-    // Assert the authenticated GitClient has access on the required scopes.
-    const hasOauthScopes = await this.git.hasOauthScopes(...REQUIRED_SCOPES);
+    // Check whether the given Github token has sufficient permissions for writing
+    // to the configured repository. If the repository is not private, only the
+    // reduced `public_repo` OAuth scope is sufficient for performing merges.
+    const hasOauthScopes = await this.git.hasOauthScopes((scopes, missing) => {
+      if (!scopes.includes('repo')) {
+        if (this.config.remote.private) {
+          missing.push('repo');
+        } else if (!scopes.includes('public_repo')) {
+          missing.push('public_repo');
+        }
+      }
+
+      // Pull requests can modify Github action workflow files. In such cases Github requires us to
+      // push with a token that has the `workflow` oauth scope set. To avoid errors when the
+      // caretaker intends to merge such PRs, we ensure the scope is always set on the token before
+      // the merge process starts.
+      // https://docs.github.com/en/developers/apps/scopes-for-oauth-apps#available-scopes
+      if (!scopes.includes('workflow')) {
+        missing.push('workflow');
+      }
+    });
+
     if (hasOauthScopes !== true) {
       return {
         status: MergeStatus.GITHUB_ERROR,
@@ -75,11 +103,17 @@ export class PullRequestMergeTask {
       return {status: MergeStatus.FAILED, failure: pullRequest};
     }
 
+
+    if (this.flags.branchPrompt &&
+        !await promptConfirm(getTargettedBranchesConfirmationPromptMessage(pullRequest))) {
+      return {status: MergeStatus.USER_ABORTED};
+    }
+
+
     // If the pull request has a caretaker note applied, raise awareness by prompting
     // the caretaker. The caretaker can then decide to proceed or abort the merge.
     if (pullRequest.hasCaretakerNote &&
-        !await promptConfirm(
-            getCaretakerNotePromptMessage(pullRequest) + `\nDo you want to proceed merging?`)) {
+        !await promptConfirm(getCaretakerNotePromptMessage(pullRequest))) {
       return {status: MergeStatus.USER_ABORTED};
     }
 
@@ -87,14 +121,14 @@ export class PullRequestMergeTask {
         new GithubApiMergeStrategy(this.git, this.config.githubApiMerge) :
         new AutosquashMergeStrategy(this.git);
 
-    // Branch that is currently checked out so that we can switch back to it once
-    // the pull request has been merged.
-    let previousBranch: null|string = null;
+    // Branch or revision that is currently checked out so that we can switch back to
+    // it once the pull request has been merged.
+    let previousBranchOrRevision: null|string = null;
 
     // The following block runs Git commands as child processes. These Git commands can fail.
     // We want to capture these command errors and return an appropriate merge request status.
     try {
-      previousBranch = this.git.getCurrentBranch();
+      previousBranchOrRevision = this.git.getCurrentBranchOrRevision();
 
       // Run preparations for the merge (e.g. fetching branches).
       await strategy.prepare(pullRequest);
@@ -107,7 +141,7 @@ export class PullRequestMergeTask {
 
       // Switch back to the previous branch. We need to do this before deleting the temporary
       // branches because we cannot delete branches which are currently checked out.
-      this.git.run(['checkout', '-f', previousBranch]);
+      this.git.run(['checkout', '-f', previousBranchOrRevision]);
 
       await strategy.cleanup(pullRequest);
 
@@ -123,8 +157,8 @@ export class PullRequestMergeTask {
     } finally {
       // Always try to restore the branch if possible. We don't want to leave
       // the repository in a different state than before.
-      if (previousBranch !== null) {
-        this.git.runGraceful(['checkout', '-f', previousBranch]);
+      if (previousBranchOrRevision !== null) {
+        this.git.runGraceful(['checkout', '-f', previousBranchOrRevision]);
       }
     }
   }

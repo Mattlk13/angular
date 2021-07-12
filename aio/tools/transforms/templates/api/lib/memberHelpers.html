@@ -3,7 +3,7 @@
 
 {%- macro renderHeritage(exportDoc) -%}
   {%- if exportDoc.extendsClauses.length %} extends {% for clause in exportDoc.extendsClauses -%}
-  <a class="code-anchor" href="{$ clause.doc.path $}">{$ clause.text $}</a>{% if not loop.last %}, {% endif -%}
+  {% if clause.doc.path %}<a class="code-anchor" href="{$ clause.doc.path $}">{$ clause.text $}</a>{% else %}{$ clause.text $}{% endif %}{% if not loop.last %}, {% endif -%}
   {% endfor %}{% endif %}
   {%- if exportDoc.implementsClauses.length %} implements {% for clause in exportDoc.implementsClauses -%}
   <a class="code-anchor" href="{$ clause.doc.path $}">{$ clause.text $}</a>{% if not loop.last %}, {% endif -%}
@@ -130,16 +130,14 @@
       <td>
         <details class="overloads">
           <summary>
-            <div class="icon-action-header">
-                <h4 class="no-anchor">{$ method.overloads.length $} overloads...</h4>
-                <a>
-                  <span class="show-all">Show All</span>
-                  <span class="collapse-all">Hide All</span>
-                  <i class="material-icons expand">expand_more</i>
-                </a>
-              </div>
+            <h4 class="no-anchor">{$ method.overloads.length $} overloads...</h4>
+            <span class="actions">
+              <span class="action-expand">Show All</span>
+              <span class="action-collapse">Hide All</span>
+              <i class="material-icons expand">expand_more</i>
+            </span>
           </summary>
-          <div class="detail-contents">
+          <div class="details-content">
             {% if method.isAbstract %}
               {$ renderOverloadInfo(method, cssClass + '-overload', method) $}
               <hr class="hr-margin fullwidth">

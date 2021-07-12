@@ -5,11 +5,12 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import {CommentStmt, ConstantPool, Expression, Statement, WrappedNodeExpr, WritePropExpr} from '@angular/compiler';
+import {ConstantPool, Expression, jsDocComment, LeadingComment, Statement, WrappedNodeExpr, WritePropExpr} from '@angular/compiler';
 import MagicString from 'magic-string';
 import * as ts from 'typescript';
 
-import {FileSystem} from '../../../src/ngtsc/file_system';
+import {ReadonlyFileSystem} from '../../../src/ngtsc/file_system';
+import {Logger} from '../../../src/ngtsc/logging';
 import {ImportManager} from '../../../src/ngtsc/translator';
 import {ParsedConfiguration} from '../../../src/perform_compile';
 import {PrivateDeclarationsAnalyses} from '../analysis/private_declarations_analyzer';
@@ -17,7 +18,6 @@ import {SwitchMarkerAnalyses, SwitchMarkerAnalysis} from '../analysis/switch_mar
 import {CompiledClass, CompiledFile, DecorationAnalyses} from '../analysis/types';
 import {IMPORT_PREFIX} from '../constants';
 import {NgccReflectionHost} from '../host/ngcc_host';
-import {Logger} from '../logging/logger';
 import {EntryPointBundle} from '../packages/entry_point_bundle';
 
 import {RedundantDecoratorMap, RenderingFormatter} from './rendering_formatter';
@@ -33,7 +33,7 @@ import {FileToWrite, getImportRewriter, stripExtension} from './utils';
 export class Renderer {
   constructor(
       private host: NgccReflectionHost, private srcFormatter: RenderingFormatter,
-      private fs: FileSystem, private logger: Logger, private bundle: EntryPointBundle,
+      private fs: ReadonlyFileSystem, private logger: Logger, private bundle: EntryPointBundle,
       private tsConfig: ParsedConfiguration|null = null) {}
 
   renderProgram(
@@ -166,11 +166,11 @@ export class Renderer {
       sourceFile: ts.SourceFile, compiledClass: CompiledClass, imports: ImportManager,
       annotateForClosureCompiler: boolean): string {
     const name = this.host.getInternalNameOfClass(compiledClass.declaration);
-    const statements: Statement[][] = compiledClass.compilation.map(c => {
-      return createAssignmentStatements(
-          name, c.name, c.initializer, annotateForClosureCompiler ? '* @nocollapse ' : undefined);
-    });
-    return this.renderStatements(sourceFile, Array.prototype.concat.apply([], statements), imports);
+    const leadingComment =
+        annotateForClosureCompiler ? jsDocComment([{tagName: 'nocollapse'}]) : undefined;
+    const statements: Statement[] = compiledClass.compilation.map(
+        c => createAssignmentStatement(name, c.name, c.initializer, leadingComment));
+    return this.renderStatements(sourceFile, statements, imports);
   }
 
   /**
@@ -213,16 +213,16 @@ export function renderConstantPool(
  * compiled decorator to be applied to the class.
  * @param analyzedClass The info about the class whose statement we want to create.
  */
-function createAssignmentStatements(
+function createAssignmentStatement(
     receiverName: ts.DeclarationName, propName: string, initializer: Expression,
-    leadingComment?: string): Statement[] {
+    leadingComment?: LeadingComment): Statement {
   const receiver = new WrappedNodeExpr(receiverName);
-  const statements =
-      [new WritePropExpr(
-           receiver, propName, initializer, /* type */ undefined, /* sourceSpan */ undefined)
-           .toStmt()];
+  const statement =
+      new WritePropExpr(
+          receiver, propName, initializer, /* type */ undefined, /* sourceSpan */ undefined)
+          .toStmt();
   if (leadingComment !== undefined) {
-    statements.unshift(new CommentStmt(leadingComment, true));
+    statement.addLeadingComment(leadingComment);
   }
-  return statements;
+  return statement;
 }

@@ -10,12 +10,14 @@ import {AstPath} from '../ast_path';
 import {I18nMeta} from '../i18n/i18n_ast';
 import {ParseSourceSpan} from '../parse_util';
 
-export interface Node {
+interface BaseNode {
   sourceSpan: ParseSourceSpan;
   visit(visitor: Visitor, context: any): any;
 }
 
-export abstract class NodeWithI18n implements Node {
+export type Node = Attribute|Comment|Element|Expansion|ExpansionCase|Text;
+
+export abstract class NodeWithI18n implements BaseNode {
   constructor(public sourceSpan: ParseSourceSpan, public i18n?: I18nMeta) {}
   abstract visit(visitor: Visitor, context: any): any;
 }
@@ -40,7 +42,7 @@ export class Expansion extends NodeWithI18n {
   }
 }
 
-export class ExpansionCase implements Node {
+export class ExpansionCase implements BaseNode {
   constructor(
       public value: string, public expression: Node[], public sourceSpan: ParseSourceSpan,
       public valueSourceSpan: ParseSourceSpan, public expSourceSpan: ParseSourceSpan) {}
@@ -53,7 +55,8 @@ export class ExpansionCase implements Node {
 export class Attribute extends NodeWithI18n {
   constructor(
       public name: string, public value: string, sourceSpan: ParseSourceSpan,
-      public valueSpan?: ParseSourceSpan, i18n?: I18nMeta) {
+      readonly keySpan: ParseSourceSpan|undefined, public valueSpan?: ParseSourceSpan,
+      i18n?: I18nMeta) {
     super(sourceSpan, i18n);
   }
   visit(visitor: Visitor, context: any): any {
@@ -64,7 +67,7 @@ export class Attribute extends NodeWithI18n {
 export class Element extends NodeWithI18n {
   constructor(
       public name: string, public attrs: Attribute[], public children: Node[],
-      sourceSpan: ParseSourceSpan, public startSourceSpan: ParseSourceSpan|null = null,
+      sourceSpan: ParseSourceSpan, public startSourceSpan: ParseSourceSpan,
       public endSourceSpan: ParseSourceSpan|null = null, i18n?: I18nMeta) {
     super(sourceSpan, i18n);
   }
@@ -73,7 +76,7 @@ export class Element extends NodeWithI18n {
   }
 }
 
-export class Comment implements Node {
+export class Comment implements BaseNode {
   constructor(public value: string|null, public sourceSpan: ParseSourceSpan) {}
   visit(visitor: Visitor, context: any): any {
     return visitor.visitComment(this, context);

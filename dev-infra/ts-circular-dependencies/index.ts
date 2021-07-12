@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * @license
  * Copyright Google LLC All Rights Reserved.
@@ -13,12 +12,12 @@ import {isAbsolute, relative, resolve} from 'path';
 import * as ts from 'typescript';
 import * as yargs from 'yargs';
 
-import {green, info, error, red, yellow} from '../utils/console';
+import {error, green, info, red, yellow} from '../utils/console';
 
 import {Analyzer, ReferenceChain} from './analyzer';
-import {compareGoldens, convertReferenceChainToGolden, Golden} from './golden';
+import {CircularDependenciesTestConfig, loadTestConfig} from './config';
 import {convertPathToForwardSlash} from './file_system';
-import {loadTestConfig, CircularDependenciesTestConfig} from './config';
+import {compareGoldens, convertReferenceChainToGolden, Golden} from './golden';
 
 
 export function tsCircularDependenciesBuilder(localYargs: yargs.Argv) {
@@ -30,20 +29,19 @@ export function tsCircularDependenciesBuilder(localYargs: yargs.Argv) {
           {type: 'string', demandOption: true, description: 'Path to the configuration file.'})
       .option('warnings', {type: 'boolean', description: 'Prints all warnings.'})
       .command(
-          'check', 'Checks if the circular dependencies have changed.', {},
-          (argv: yargs.Arguments) => {
+          'check', 'Checks if the circular dependencies have changed.', args => args,
+          argv => {
             const {config: configArg, warnings} = argv;
             const configPath = isAbsolute(configArg) ? configArg : resolve(configArg);
             const config = loadTestConfig(configPath);
-            process.exit(main(false, config, warnings));
+            process.exit(main(false, config, !!warnings));
           })
-      .command(
-          'approve', 'Approves the current circular dependencies.', {}, (argv: yargs.Arguments) => {
-            const {config: configArg, warnings} = argv;
-            const configPath = isAbsolute(configArg) ? configArg : resolve(configArg);
-            const config = loadTestConfig(configPath);
-            process.exit(main(true, config, warnings));
-          });
+      .command('approve', 'Approves the current circular dependencies.', args => args, argv => {
+        const {config: configArg, warnings} = argv;
+        const configPath = isAbsolute(configArg) ? configArg : resolve(configArg);
+        const config = loadTestConfig(configPath);
+        process.exit(main(true, config, !!warnings));
+      });
 }
 
 /**
@@ -60,7 +58,7 @@ export function main(
   const cycles: ReferenceChain[] = [];
   const checkedNodes = new WeakSet<ts.SourceFile>();
 
-  globSync(glob, {absolute: true}).forEach(filePath => {
+  globSync(glob, {absolute: true, ignore: ['**/node_modules/**']}).forEach(filePath => {
     const sourceFile = analyzer.getSourceFile(filePath);
     cycles.push(...analyzer.findCycles(sourceFile, checkedNodes));
   });
@@ -95,7 +93,7 @@ export function main(
     info(yellow(`   Please rerun with "--warnings" to inspect unresolved imports.`));
   }
 
-  const expected: Golden = JSON.parse(readFileSync(goldenFile, 'utf8'));
+  const expected = JSON.parse(readFileSync(goldenFile, 'utf8')) as Golden;
   const {fixedCircularDeps, newCircularDeps} = compareGoldens(actual, expected);
   const isMatching = fixedCircularDeps.length === 0 && newCircularDeps.length === 0;
 
@@ -113,7 +111,8 @@ export function main(
   if (fixedCircularDeps.length !== 0) {
     error(yellow(`   Fixed circular dependencies that need to be removed from the golden:`));
     fixedCircularDeps.forEach(c => error(`     • ${convertReferenceChainToString(c)}`));
-    error();
+    info(yellow(`\n   Total: ${newCircularDeps.length} new cycle(s), ${
+        fixedCircularDeps.length} fixed cycle(s). \n`));
     if (approveCommand) {
       info(yellow(`   Please approve the new golden with: ${approveCommand}`));
     } else {
@@ -133,8 +132,4 @@ function getRelativePath(baseDir: string, path: string) {
 /** Converts the given reference chain to its string representation. */
 function convertReferenceChainToString(chain: ReferenceChain<string>) {
   return chain.join(' → ');
-}
-
-if (require.main === module) {
-  tsCircularDependenciesBuilder(yargs).parse();
 }

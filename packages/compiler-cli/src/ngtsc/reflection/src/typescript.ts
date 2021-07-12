@@ -8,7 +8,7 @@
 
 import * as ts from 'typescript';
 
-import {ClassDeclaration, ClassMember, ClassMemberKind, CtorParameter, Declaration, Decorator, FunctionDefinition, Import, isDecoratorIdentifier, ReflectionHost} from './host';
+import {ClassDeclaration, ClassMember, ClassMemberKind, CtorParameter, Declaration, DeclarationKind, DeclarationNode, Decorator, FunctionDefinition, Import, isDecoratorIdentifier, ReflectionHost} from './host';
 import {typeToValue} from './type_to_value';
 import {isNamedClassDeclaration} from './util';
 
@@ -19,7 +19,7 @@ import {isNamedClassDeclaration} from './util';
 export class TypeScriptReflectionHost implements ReflectionHost {
   constructor(protected checker: ts.TypeChecker) {}
 
-  getDecoratorsOfDeclaration(declaration: ts.Declaration): Decorator[]|null {
+  getDecoratorsOfDeclaration(declaration: DeclarationNode): Decorator[]|null {
     if (declaration.decorators === undefined || declaration.decorators.length === 0) {
       return null;
     }
@@ -36,12 +36,14 @@ export class TypeScriptReflectionHost implements ReflectionHost {
   getConstructorParameters(clazz: ClassDeclaration): CtorParameter[]|null {
     const tsClazz = castDeclarationToClassOrDie(clazz);
 
-    // First, find the constructor with a `body`. The constructors without a `body` are overloads
-    // whereas we want the implementation since it's the one that'll be executed and which can
-    // have decorators.
+    const isDeclaration = tsClazz.getSourceFile().isDeclarationFile;
+    // For non-declaration files, we want to find the constructor with a `body`. The constructors
+    // without a `body` are overloads whereas we want the implementation since it's the one that'll
+    // be executed and which can have decorators. For declaration files, we take the first one that
+    // we get.
     const ctor = tsClazz.members.find(
         (member): member is ts.ConstructorDeclaration =>
-            ts.isConstructorDeclaration(member) && member.body !== undefined);
+            ts.isConstructorDeclaration(member) && (isDeclaration || member.body !== undefined));
     if (ctor === undefined) {
       return null;
     }
@@ -64,12 +66,12 @@ export class TypeScriptReflectionHost implements ReflectionHost {
       // optional tokes that don't have providers.
       if (typeNode && ts.isUnionTypeNode(typeNode)) {
         let childTypeNodes = typeNode.types.filter(
-            childTypeNode => childTypeNode.kind !== ts.SyntaxKind.NullKeyword);
+            childTypeNode =>
+                !(ts.isLiteralTypeNode(childTypeNode) &&
+                  childTypeNode.literal.kind === ts.SyntaxKind.NullKeyword));
 
         if (childTypeNodes.length === 1) {
           typeNode = childTypeNodes[0];
-        } else {
-          typeNode = null;
         }
       }
 
@@ -103,7 +105,6 @@ export class TypeScriptReflectionHost implements ReflectionHost {
     if (!ts.isSourceFile(node)) {
       throw new Error(`getExportsOfModule() called on non-SourceFile in TS code`);
     }
-    const map = new Map<string, Declaration>();
 
     // Reflect the module to a Symbol, and use getExportsOfModule() to get a list of exported
     // Symbols.
@@ -111,6 +112,8 @@ export class TypeScriptReflectionHost implements ReflectionHost {
     if (symbol === undefined) {
       return null;
     }
+
+    const map = new Map<string, Declaration>();
     this.checker.getExportsOfModule(symbol).forEach(exportSymbol => {
       // Map each exported Symbol to a Declaration and add it to the map.
       const decl = this.getDeclarationOfSymbol(exportSymbol, null);
@@ -184,7 +187,7 @@ export class TypeScriptReflectionHost implements ReflectionHost {
     return declaration.initializer || null;
   }
 
-  getDtsDeclaration(_: ts.Declaration): ts.Declaration|null {
+  getDtsDeclaration(_: ClassDeclaration): ts.Declaration|null {
     return null;
   }
 
@@ -196,6 +199,35 @@ export class TypeScriptReflectionHost implements ReflectionHost {
     return clazz.name;
   }
 
+  isStaticallyExported(clazz: ClassDeclaration): boolean {
+    // First check if there's an `export` modifier directly on the class declaration.
+    let topLevel: ts.Node = clazz;
+    if (ts.isVariableDeclaration(clazz) && ts.isVariableDeclarationList(clazz.parent)) {
+      topLevel = clazz.parent.parent;
+    }
+    if (topLevel.modifiers !== undefined &&
+        topLevel.modifiers.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+      // The node is part of a declaration that's directly exported.
+      return true;
+    }
+
+    // If `topLevel` is not directly exported via a modifier, then it might be indirectly exported,
+    // e.g.:
+    //
+    // class Foo {}
+    // export {Foo};
+    //
+    // The only way to check this is to look at the module level for exports of the class. As a
+    // performance optimization, this check is only performed if the class is actually declared at
+    // the top level of the file and thus eligible for exporting in the first place.
+    if (topLevel.parent === undefined || !ts.isSourceFile(topLevel.parent)) {
+      return false;
+    }
+
+    const localExports = this.getLocalExportedClassesOfSourceFile(clazz.getSourceFile());
+    return localExports.has(clazz);
+  }
+
   protected getDirectImportOfIdentifier(id: ts.Identifier): Import|null {
     const symbol = this.checker.getSymbolAtLocation(id);
 
@@ -204,7 +236,7 @@ export class TypeScriptReflectionHost implements ReflectionHost {
       return null;
     }
 
-    const decl: ts.Declaration = symbol.declarations[0];
+    const decl = symbol.declarations[0];
     const importDecl = getContainingImportDeclaration(decl);
 
     // Ignore declarations that are defined locally (not imported).
@@ -245,7 +277,7 @@ export class TypeScriptReflectionHost implements ReflectionHost {
       return null;
     }
     const namespaceSymbol = this.checker.getSymbolAtLocation(namespaceIdentifier);
-    if (!namespaceSymbol) {
+    if (!namespaceSymbol || namespaceSymbol.declarations === undefined) {
       return null;
     }
     const declaration =
@@ -315,6 +347,7 @@ export class TypeScriptReflectionHost implements ReflectionHost {
         known: null,
         viaModule,
         identity: null,
+        kind: DeclarationKind.Concrete,
       };
     } else if (symbol.declarations !== undefined && symbol.declarations.length > 0) {
       return {
@@ -322,6 +355,7 @@ export class TypeScriptReflectionHost implements ReflectionHost {
         known: null,
         viaModule,
         identity: null,
+        kind: DeclarationKind.Concrete,
       };
     } else {
       return null;
@@ -363,7 +397,7 @@ export class TypeScriptReflectionHost implements ReflectionHost {
     let kind: ClassMemberKind|null = null;
     let value: ts.Expression|null = null;
     let name: string|null = null;
-    let nameNode: ts.Identifier|null = null;
+    let nameNode: ts.Identifier|ts.StringLiteral|null = null;
 
     if (ts.isPropertyDeclaration(node)) {
       kind = ClassMemberKind.Property;
@@ -385,6 +419,9 @@ export class TypeScriptReflectionHost implements ReflectionHost {
     } else if (ts.isIdentifier(node.name)) {
       name = node.name.text;
       nameNode = node.name;
+    } else if (ts.isStringLiteral(node.name)) {
+      name = node.name.text;
+      nameNode = node.name;
     } else {
       return null;
     }
@@ -404,6 +441,58 @@ export class TypeScriptReflectionHost implements ReflectionHost {
       value,
       isStatic,
     };
+  }
+
+  /**
+   * Get the set of classes declared in `file` which are exported.
+   */
+  private getLocalExportedClassesOfSourceFile(file: ts.SourceFile): Set<ClassDeclaration> {
+    const cacheSf: SourceFileWithCachedExports = file as SourceFileWithCachedExports;
+    if (cacheSf[LocalExportedClasses] !== undefined) {
+      // TS does not currently narrow symbol-keyed fields, hence the non-null assert is needed.
+      return cacheSf[LocalExportedClasses]!;
+    }
+
+    const exportSet = new Set<ClassDeclaration>();
+    cacheSf[LocalExportedClasses] = exportSet;
+
+    const sfSymbol = this.checker.getSymbolAtLocation(cacheSf);
+
+    if (sfSymbol === undefined || sfSymbol.exports === undefined) {
+      return exportSet;
+    }
+
+    // Scan the exported symbol of the `ts.SourceFile` for the original `symbol` of the class
+    // declaration.
+    //
+    // Note: when checking multiple classes declared in the same file, this repeats some operations.
+    // In theory, this could be expensive if run in the context of a massive input file (like a
+    // large FESM in ngcc). If performance does become an issue here, it should be possible to
+    // create a `Set<>`
+
+    // Unfortunately, `ts.Iterator` doesn't implement the iterator protocol, so iteration here is
+    // done manually.
+    const iter = sfSymbol.exports.values();
+    let item = iter.next();
+    while (item.done !== true) {
+      let exportedSymbol = item.value;
+
+      // If this exported symbol comes from an `export {Foo}` statement, then the symbol is actually
+      // for the export declaration, not the original declaration. Such a symbol will be an alias,
+      // so unwrap aliasing if necessary.
+      if (exportedSymbol.flags & ts.SymbolFlags.Alias) {
+        exportedSymbol = this.checker.getAliasedSymbol(exportedSymbol);
+      }
+
+      if (exportedSymbol.valueDeclaration !== undefined &&
+          exportedSymbol.valueDeclaration.getSourceFile() === file &&
+          this.isClass(exportedSymbol.valueDeclaration)) {
+        exportSet.add(exportedSymbol.valueDeclaration);
+      }
+      item = iter.next();
+    }
+
+    return exportSet;
   }
 }
 
@@ -459,6 +548,8 @@ export function reflectTypeEntityToDeclaration(
         throw new Error(`Module specifier is not a string`);
       }
       return {node, from: importDecl.moduleSpecifier.text};
+    } else if (ts.isModuleDeclaration(decl)) {
+      return {node, from: null};
     } else {
       throw new Error(`Unknown import type?`);
     }
@@ -584,4 +675,27 @@ function getExportedName(decl: ts.Declaration, originalId: ts.Identifier): strin
   return ts.isImportSpecifier(decl) ?
       (decl.propertyName !== undefined ? decl.propertyName : decl.name).text :
       originalId.text;
+}
+
+const LocalExportedClasses = Symbol('LocalExportedClasses');
+
+/**
+ * A `ts.SourceFile` expando which includes a cached `Set` of local `ClassDeclarations` that are
+ * exported either directly (`export class ...`) or indirectly (via `export {...}`).
+ *
+ * This cache does not cause memory leaks as:
+ *
+ *  1. The only references cached here are local to the `ts.SourceFile`, and thus also available in
+ *     `this.statements`.
+ *
+ *  2. The only way this `Set` could change is if the source file itself was changed, which would
+ *     invalidate the entire `ts.SourceFile` object in favor of a new version. Thus, changing the
+ *     source file also invalidates this cache.
+ */
+interface SourceFileWithCachedExports extends ts.SourceFile {
+  /**
+   * Cached `Set` of `ClassDeclaration`s which are locally declared in this file and are exported
+   * either directly or indirectly.
+   */
+  [LocalExportedClasses]?: Set<ClassDeclaration>;
 }

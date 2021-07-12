@@ -8,10 +8,8 @@
 
 import {ResourceLoader} from '@angular/compiler';
 import {Compiler, Component, NgModule} from '@angular/core';
-import {async, fakeAsync, inject, TestBed, tick} from '@angular/core/testing';
+import {fakeAsync, inject, TestBed, tick, waitForAsync} from '@angular/core/testing';
 import {ResourceLoaderImpl} from '@angular/platform-browser-dynamic/src/resource_loader/resource_loader_impl';
-
-
 
 // Components for the tests.
 class FancyService {
@@ -54,7 +52,7 @@ if (isBrowser) {
         expect(actuallyDone).toEqual(true);
       });
 
-      it('should run async tests with ResourceLoaders', async(() => {
+      it('should run async tests with ResourceLoaders', waitForAsync(() => {
            const resourceLoader = new ResourceLoaderImpl();
            resourceLoader
                .get('/base/angular/packages/platform-browser/test/static_assets/test.html')
@@ -106,52 +104,17 @@ if (isBrowser) {
     });
 
     describe('errors', () => {
-      let originalJasmineIt: any;
-
-      const patchJasmineIt = () => {
-        let resolve: (result: any) => void;
-        let reject: (error: any) => void;
-        const promise = new Promise((res, rej) => {
-          resolve = res;
-          reject = rej;
-        });
-        originalJasmineIt = jasmine.getEnv().it;
-        jasmine.getEnv().it = (description: string, fn: (done: DoneFn) => void): any => {
-          const done = (() => resolve(null)) as DoneFn;
-          done.fail = reject;
-          fn(done);
-          return null;
-        };
-        return promise;
-      };
-
-      const restoreJasmineIt = () => {
-        jasmine.getEnv().it = originalJasmineIt;
-      };
-
-      it('should fail when an ResourceLoader fails', done => {
-        const itPromise = patchJasmineIt();
-
-        it('should fail with an error from a promise', async(() => {
-             TestBed.configureTestingModule({declarations: [BadTemplateUrl]});
-             TestBed.compileComponents();
-           }));
-
-        itPromise.then(
-            () => {
-              done.fail('Expected test to fail, but it did not');
-            },
-            (err: any) => {
-              expect(err.message)
-                  .toEqual('Uncaught (in promise): Failed to load non-existent.html');
-              done();
-            });
-        restoreJasmineIt();
-      }, 10000);
+      describe('should fail when an ResourceLoader fails', () => {
+        it('should fail with an error from a promise', async () => {
+          TestBed.configureTestingModule({declarations: [BadTemplateUrl]});
+          await expectAsync(TestBed.compileComponents())
+              .toBeRejectedWith('Failed to load non-existent.html');
+        }, 10000);
+      });
     });
 
     describe('TestBed createComponent', function() {
-      it('should allow an external templateUrl', async(() => {
+      it('should allow an external templateUrl', waitForAsync(() => {
            TestBed.configureTestingModule({declarations: [ExternalTemplateComp]});
            TestBed.compileComponents().then(() => {
              const componentFixture = TestBed.createComponent(ExternalTemplateComp);

@@ -22,10 +22,15 @@ export const createInjectionToken = makeMetadataFactory<object>(
     'InjectionToken', (desc: string) => ({_desc: desc, ɵprov: undefined}));
 
 export interface Attribute {
-  attributeName?: string;
+  attributeName: string;
 }
 export const createAttribute =
-    makeMetadataFactory<Attribute>('Attribute', (attributeName?: string) => ({attributeName}));
+    makeMetadataFactory<Attribute>('Attribute', (attributeName: string) => ({attributeName}));
+
+// Stores the default value of `emitDistinctChangesOnly` when the `emitDistinctChangesOnly` is not
+// explicitly set.
+export const emitDistinctChangesOnlyDefaultValue = true;
+
 
 export interface Query {
   descendants: boolean;
@@ -34,20 +39,31 @@ export interface Query {
   isViewQuery: boolean;
   selector: any;
   static?: boolean;
+  emitDistinctChangesOnly: boolean;
 }
 
 export const createContentChildren = makeMetadataFactory<Query>(
-    'ContentChildren',
-    (selector?: any, data: any = {}) =>
-        ({selector, first: false, isViewQuery: false, descendants: false, ...data}));
+    'ContentChildren', (selector?: any, data: any = {}) => ({
+                         selector,
+                         first: false,
+                         isViewQuery: false,
+                         descendants: false,
+                         emitDistinctChangesOnly: emitDistinctChangesOnlyDefaultValue,
+                         ...data
+                       }));
 export const createContentChild = makeMetadataFactory<Query>(
     'ContentChild',
     (selector?: any, data: any = {}) =>
         ({selector, first: true, isViewQuery: false, descendants: true, ...data}));
 export const createViewChildren = makeMetadataFactory<Query>(
-    'ViewChildren',
-    (selector?: any, data: any = {}) =>
-        ({selector, first: false, isViewQuery: true, descendants: true, ...data}));
+    'ViewChildren', (selector?: any, data: any = {}) => ({
+                      selector,
+                      first: false,
+                      isViewQuery: true,
+                      descendants: true,
+                      emitDistinctChangesOnly: emitDistinctChangesOnlyDefaultValue,
+                      ...data
+                    }));
 export const createViewChild = makeMetadataFactory<Query>(
     'ViewChild',
     (selector: any, data: any) =>
@@ -82,7 +98,7 @@ export interface Component extends Directive {
 }
 export enum ViewEncapsulation {
   Emulated = 0,
-  Native = 1,
+  // Historically the 1 value was for `Native` encapsulation which has been removed as of v11.
   None = 2,
   ShadowDom = 3
 }
@@ -224,6 +240,7 @@ export const enum NodeFlags {
   StaticQuery = 1 << 28,
   DynamicQuery = 1 << 29,
   TypeModuleProvider = 1 << 30,
+  EmitDistinctChangesOnly = 1 << 31,
   CatQuery = TypeContentQuery | TypeViewQuery,
 
   // mutually exclusive values...
@@ -255,6 +272,11 @@ export const enum InjectFlags {
   SkipSelf = 1 << 2,
   /** Inject `defaultValue` instead if token not found. */
   Optional = 1 << 3,
+  /**
+   * This token is being injected into a pipe.
+   * @internal
+   */
+  ForPipe = 1 << 4,
 }
 
 export const enum ArgumentType {

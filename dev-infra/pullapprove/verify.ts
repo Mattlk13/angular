@@ -8,27 +8,21 @@
 import {readFileSync} from 'fs';
 import {resolve} from 'path';
 
-import {getRepoBaseDir} from '../utils/config';
 import {debug, info} from '../utils/console';
-import {allFiles} from '../utils/repo-files';
-
-import {PullApproveGroup} from './group';
+import {GitClient} from '../utils/git/git-client';
 import {logGroup, logHeader} from './logging';
-import {parsePullApproveYaml} from './parse-yaml';
+import {getGroupsFromYaml} from './parse-yaml';
 
 export function verify() {
+  const git = GitClient.get();
   /** Full path to PullApprove config file */
-  const PULL_APPROVE_YAML_PATH = resolve(getRepoBaseDir(), '.pullapprove.yml');
+  const PULL_APPROVE_YAML_PATH = resolve(git.baseDir, '.pullapprove.yml');
   /** All tracked files in the repository. */
-  const REPO_FILES = allFiles();
+  const REPO_FILES = git.allFiles();
   /** The pull approve config file. */
   const pullApproveYamlRaw = readFileSync(PULL_APPROVE_YAML_PATH, 'utf8');
-  /** JSON representation of the pullapprove yaml file. */
-  const pullApprove = parsePullApproveYaml(pullApproveYamlRaw);
   /** All of the groups defined in the pullapprove yaml. */
-  const groups = Object.entries(pullApprove.groups).map(([groupName, group]) => {
-    return new PullApproveGroup(groupName, group);
-  });
+  const groups = getGroupsFromYaml(pullApproveYamlRaw);
   /**
    * PullApprove groups without conditions. These are skipped in the verification
    * as those would always be active and cause zero unmatched files.
@@ -55,14 +49,18 @@ export function verify() {
    * Whether all group condition lines match at least one file and all files
    * are matched by at least one group.
    */
-  const verificationSucceeded =
+  const allGroupConditionsValid =
       resultsByGroup.every(r => !r.unmatchedCount) && !unmatchedFiles.length;
+  /** Whether all groups have at least one reviewer user or team defined.  */
+  const groupsWithoutReviewers = groups.filter(group => Object.keys(group.reviewers).length === 0);
+  /** The overall result of the verifcation. */
+  const overallResult = allGroupConditionsValid && groupsWithoutReviewers.length === 0;
 
   /**
    * Overall result
    */
   logHeader('Overall Result');
-  if (verificationSucceeded) {
+  if (overallResult) {
     info('PullApprove verification succeeded!');
   } else {
     info(`PullApprove verification failed.`);
@@ -70,6 +68,15 @@ export function verify() {
     info(`Please update '.pullapprove.yml' to ensure that all necessary`);
     info(`files/directories have owners and all patterns that appear in`);
     info(`the file correspond to actual files/directories in the repo.`);
+  }
+  /** Reviewers check */
+  logHeader(`Group Reviewers Check`);
+  if (groupsWithoutReviewers.length === 0) {
+    info('All group contain at least one reviewer user or team.');
+  } else {
+    info.group(`Discovered ${groupsWithoutReviewers.length} group(s) without a reviewer defined`);
+    groupsWithoutReviewers.forEach(g => info(g.groupName));
+    info.groupEnd();
   }
   /**
    * File by file Summary
@@ -90,13 +97,18 @@ export function verify() {
   info.groupEnd();
   const matchedGroups = resultsByGroup.filter(group => !group.unmatchedCount);
   info.group(`Matched conditions by Group (${matchedGroups.length} groups)`);
-  matchedGroups.forEach(group => logGroup(group, true, debug));
+  matchedGroups.forEach(group => logGroup(group, 'matchedConditions', debug));
   info.groupEnd();
   const unmatchedGroups = resultsByGroup.filter(group => group.unmatchedCount);
   info.group(`Unmatched conditions by Group (${unmatchedGroups.length} groups)`);
-  unmatchedGroups.forEach(group => logGroup(group, false));
+  unmatchedGroups.forEach(group => logGroup(group, 'unmatchedConditions'));
+  info.groupEnd();
+  const unverifiableConditionsInGroups =
+      resultsByGroup.filter(group => group.unverifiableConditions.length > 0);
+  info.group(`Unverifiable conditions by Group (${unverifiableConditionsInGroups.length} groups)`);
+  unverifiableConditionsInGroups.forEach(group => logGroup(group, 'unverifiableConditions'));
   info.groupEnd();
 
   // Provide correct exit code based on verification success.
-  process.exit(verificationSucceeded ? 0 : 1);
+  process.exit(overallResult ? 0 : 1);
 }

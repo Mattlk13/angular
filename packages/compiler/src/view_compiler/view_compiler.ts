@@ -143,7 +143,7 @@ class ViewBuilder implements TemplateAstVisitor, LocalResolver {
         // Note: queries start with id 1 so we can use the number in a Bloom filter!
         const queryId = queryIndex + 1;
         const bindingType = query.first ? QueryBindingType.First : QueryBindingType.All;
-        const flags = NodeFlags.TypeViewQuery | calcStaticDynamicQueryFlags(query);
+        const flags = NodeFlags.TypeViewQuery | calcQueryFlags(query);
         this.nodes.push(() => ({
                           sourceSpan: null,
                           nodeFlags: flags,
@@ -485,7 +485,7 @@ class ViewBuilder implements TemplateAstVisitor, LocalResolver {
 
     dirAst.directive.queries.forEach((query, queryIndex) => {
       const queryId = dirAst.contentQueryStartId + queryIndex;
-      const flags = NodeFlags.TypeContentQuery | calcStaticDynamicQueryFlags(query);
+      const flags = NodeFlags.TypeContentQuery | calcQueryFlags(query);
       const bindingType = query.first ? QueryBindingType.First : QueryBindingType.All;
       this.nodes.push(() => ({
                         sourceSpan: dirAst.sourceSpan,
@@ -680,9 +680,13 @@ class ViewBuilder implements TemplateAstVisitor, LocalResolver {
   }
 
   notifyImplicitReceiverUse(): void {
-    // Not needed in View Engine as View Engine walks through the generated
+    // Not needed in ViewEngine as ViewEngine walks through the generated
     // expressions to figure out if the implicit receiver is used and needs
     // to be generated as part of the pre-update statements.
+  }
+
+  maybeRestoreView(): void {
+    // Not necessary in ViewEngine, because view restoration is an Ivy concept.
   }
 
   private _createLiteralArrayConverter(sourceSpan: ParseSourceSpan, argCount: number):
@@ -1028,7 +1032,7 @@ function elementEventNameAndTarget(
   }
 }
 
-function calcStaticDynamicQueryFlags(query: CompileQueryMetadata) {
+function calcQueryFlags(query: CompileQueryMetadata) {
   let flags = NodeFlags.None;
   // Note: We only make queries static that query for a single item and the user specifically
   // set the to be static. This is because of backwards compatibility with the old view compiler...
@@ -1036,6 +1040,9 @@ function calcStaticDynamicQueryFlags(query: CompileQueryMetadata) {
     flags |= NodeFlags.StaticQuery;
   } else {
     flags |= NodeFlags.DynamicQuery;
+  }
+  if (query.emitDistinctChangesOnly) {
+    flags |= NodeFlags.EmitDistinctChangesOnly;
   }
   return flags;
 }

@@ -315,11 +315,6 @@ describe('Zone', function() {
           // TODO: JiaLiPassion, need to find out why the test bundle is not `use strict`.
           xit('event handler with null context should use event.target',
               ifEnvSupports(canPatchOnProperty(Document.prototype, 'onmousedown'), function() {
-                const ieVer = getIEVersion();
-                if (ieVer && ieVer === 9) {
-                  // in ie9, this is window object even we call func.apply(undefined)
-                  return;
-                }
                 const logs: string[] = [];
                 const EventTarget = (window as any)['EventTarget'];
                 let oriAddEventListener = EventTarget && EventTarget.prototype ?
@@ -353,7 +348,7 @@ describe('Zone', function() {
 
                 (HTMLSpanElement.prototype as any)[zoneSymbol('addEventListener')] = null;
 
-                patchEventTarget(window, [HTMLSpanElement.prototype]);
+                patchEventTarget(window, null as any, [HTMLSpanElement.prototype]);
 
                 const span = document.createElement('span');
                 document.body.appendChild(span);
@@ -1042,7 +1037,7 @@ describe('Zone', function() {
          }));
 
       it('should change options to boolean if not support passive', () => {
-        patchEventTarget(window, [TestEventListener.prototype]);
+        patchEventTarget(window, null as any, [TestEventListener.prototype]);
         const testEventListener = new TestEventListener();
 
         const listener = function() {};
@@ -1154,10 +1149,10 @@ describe('Zone', function() {
         it('should not be passive with global variable defined with passive false option', () => {
           testPassive('touchstart', 'defaultPrevented', {passive: false});
         });
-        it('should be passive with global variable defined and also blacklisted', () => {
+        it('should be passive with global variable defined and also unpatched', () => {
           testPassive('scroll', 'default will run', undefined);
         });
-        it('should not be passive without global variable defined and also blacklisted', () => {
+        it('should not be passive without global variable defined and also unpatched', () => {
           testPassive('wheel', 'defaultPrevented', undefined);
         });
       });
@@ -1376,7 +1371,7 @@ describe('Zone', function() {
            let hookSpy2 = jasmine.createSpy('spy2');
            let hookSpy3 = jasmine.createSpy('spy3');
            let logs: string[] = [];
-           const isBlacklistedEvent = function(source: string) {
+           const isUnpatchedEvent = function(source: string) {
              return source.lastIndexOf('click') !== -1;
            };
            const zone1 = Zone.current.fork({
@@ -1385,7 +1380,7 @@ describe('Zone', function() {
                  parentZoneDelegate: ZoneDelegate, currentZone: Zone, targetZone: Zone, task: Task):
                  any => {
                    if ((task.type === 'eventTask' || task.type === 'macroTask') &&
-                       isBlacklistedEvent(task.source)) {
+                       isUnpatchedEvent(task.source)) {
                      task.cancelScheduleRequest();
 
                      return zone2.scheduleTask(task);
@@ -2495,9 +2490,260 @@ describe('Zone', function() {
            expect(hookSpy).not.toHaveBeenCalled();
            expect(logs).toEqual([]);
          }));
+
+      it('should re-throw the error when the only listener throw error', function(done: DoneFn) {
+        // override global.onerror to prevent jasmine report error
+        let oriWindowOnError = window.onerror;
+        let logs: string[] = [];
+        window.onerror = function(err: any) {
+          logs.push(err);
+        };
+        try {
+          const listener1 = function() {
+            throw new Error('test1');
+          };
+          button.addEventListener('click', listener1);
+
+          const mouseEvent = document.createEvent('MouseEvent');
+          mouseEvent.initEvent('click', true, true);
+
+          const unhandledRejection = (e: PromiseRejectionEvent) => {
+            fail('should not be here');
+          };
+          window.addEventListener('unhandledrejection', unhandledRejection);
+
+          button.dispatchEvent(mouseEvent);
+          expect(logs).toEqual(['Uncaught Error: test1']);
+
+          setTimeout(() => {
+            expect(logs).toEqual(['Uncaught Error: test1']);
+            window.removeEventListener('unhandledrejection', unhandledRejection);
+            window.onerror = oriWindowOnError;
+            done()
+          });
+        } catch (e: any) {
+          window.onerror = oriWindowOnError;
+        }
+      });
+
+      it('should not re-throw the error when zone onHandleError handled the error and the only listener throw error',
+         function(done: DoneFn) {
+           // override global.onerror to prevent jasmine report error
+           let oriWindowOnError = window.onerror;
+           window.onerror = function() {};
+           try {
+             let logs: string[] = [];
+             const listener1 = function() {
+               throw new Error('test1');
+             };
+             const zone = Zone.current.fork({
+               name: 'error',
+               onHandleError: (delegate, curr, target, error) => {
+                 logs.push('zone handled ' + target.name + ' ' + error.message);
+                 return false;
+               }
+             });
+
+             zone.runGuarded(() => {
+               button.addEventListener('click', listener1);
+             });
+
+             const mouseEvent = document.createEvent('MouseEvent');
+             mouseEvent.initEvent('click', true, true);
+
+             const unhandledRejection = (e: PromiseRejectionEvent) => {
+               logs.push(e.reason.message);
+             };
+             window.addEventListener('unhandledrejection', unhandledRejection);
+
+             button.dispatchEvent(mouseEvent);
+             expect(logs).toEqual(['zone handled error test1']);
+
+             setTimeout(() => {
+               expect(logs).toEqual(['zone handled error test1']);
+               window.removeEventListener('unhandledrejection', unhandledRejection);
+               window.onerror = oriWindowOnError;
+               done();
+             });
+           } catch (e: any) {
+             window.onerror = oriWindowOnError;
+           }
+         });
+
+      it('should be able to continue to invoke remaining listeners even some listener throw error',
+         function(done: DoneFn) {
+           // override global.onerror to prevent jasmine report error
+           let oriWindowOnError = window.onerror;
+           window.onerror = function() {};
+           try {
+             let logs: string[] = [];
+             const listener1 = function() {
+               logs.push('listener1');
+             };
+             const listener2 = function() {
+               throw new Error('test1');
+             };
+             const listener3 = function() {
+               throw new Error('test2');
+             };
+             const listener4 = {
+               handleEvent: function() {
+                 logs.push('listener2');
+               }
+             };
+
+             button.addEventListener('click', listener1);
+             button.addEventListener('click', listener2);
+             button.addEventListener('click', listener3);
+             button.addEventListener('click', listener4);
+
+             const mouseEvent = document.createEvent('MouseEvent');
+             mouseEvent.initEvent('click', true, true);
+
+             const unhandledRejection = (e: PromiseRejectionEvent) => {
+               logs.push(e.reason.message);
+             };
+             window.addEventListener('unhandledrejection', unhandledRejection);
+
+             button.dispatchEvent(mouseEvent);
+             expect(logs).toEqual(['listener1', 'listener2']);
+
+             setTimeout(() => {
+               expect(logs).toEqual(['listener1', 'listener2', 'test1', 'test2']);
+               window.removeEventListener('unhandledrejection', unhandledRejection);
+               window.onerror = oriWindowOnError;
+               done()
+             });
+           } catch (e: any) {
+             window.onerror = oriWindowOnError;
+           }
+         });
+
+      it('should be able to continue to invoke remaining listeners even some listener throw error with onHandleError zone',
+         function(done: DoneFn) {
+           // override global.onerror to prevent jasmine report error
+           let oriWindowOnError = window.onerror;
+           window.onerror = function() {};
+           try {
+             const zone = Zone.current.fork({
+               name: 'error',
+               onHandleError: (delegate, curr, target, error) => {
+                 logs.push('zone handled ' + target.name + ' ' + error.message);
+                 return false;
+               }
+             });
+             let logs: string[] = [];
+             const listener1 = function() {
+               logs.push('listener1');
+             };
+             const listener2 = function() {
+               throw new Error('test1');
+             };
+             const listener3 = function() {
+               throw new Error('test2');
+             };
+             const listener4 = {
+               handleEvent: function() {
+                 logs.push('listener2');
+               }
+             };
+
+             zone.runGuarded(() => {
+               button.addEventListener('click', listener1);
+               button.addEventListener('click', listener2);
+               button.addEventListener('click', listener3);
+               button.addEventListener('click', listener4);
+             });
+
+             const mouseEvent = document.createEvent('MouseEvent');
+             mouseEvent.initEvent('click', true, true);
+
+             const unhandledRejection = (e: PromiseRejectionEvent) => {
+               fail('should not be here');
+             };
+             window.addEventListener('unhandledrejection', unhandledRejection);
+
+             button.dispatchEvent(mouseEvent);
+             expect(logs).toEqual([
+               'listener1', 'zone handled error test1', 'zone handled error test2', 'listener2'
+             ]);
+
+             setTimeout(() => {
+               expect(logs).toEqual([
+                 'listener1', 'zone handled error test1', 'zone handled error test2', 'listener2'
+               ]);
+               window.removeEventListener('unhandledrejection', unhandledRejection);
+               window.onerror = oriWindowOnError;
+               done();
+             });
+           } catch (e: any) {
+             window.onerror = oriWindowOnError;
+           }
+         });
+
+      it('should be able to continue to invoke remaining listeners even some listener throw error in the different zones',
+         function(done: DoneFn) {
+           // override global.onerror to prevent jasmine report error
+           let oriWindowOnError = window.onerror;
+           let logs: string[] = [];
+           window.onerror = function(err: any) {
+             logs.push(err);
+           };
+           try {
+             const zone1 = Zone.current.fork({
+               name: 'zone1',
+               onHandleError: (delegate, curr, target, error) => {
+                 logs.push(error.message);
+                 return false;
+               }
+             });
+             const listener1 = function() {
+               logs.push('listener1');
+             };
+             const listener2 = function() {
+               throw new Error('test1');
+             };
+             const listener3 = function() {
+               throw new Error('test2');
+             };
+             const listener4 = {
+               handleEvent: function() {
+                 logs.push('listener2');
+               }
+             };
+
+             button.addEventListener('click', listener1);
+             zone1.run(() => {
+               button.addEventListener('click', listener2);
+             });
+             button.addEventListener('click', listener3);
+             button.addEventListener('click', listener4);
+
+             const mouseEvent = document.createEvent('MouseEvent');
+             mouseEvent.initEvent('click', true, true);
+
+             const unhandledRejection = (e: PromiseRejectionEvent) => {
+               fail('should not be here');
+             };
+             window.addEventListener('unhandledrejection', unhandledRejection);
+
+             button.dispatchEvent(mouseEvent);
+             expect(logs).toEqual(['listener1', 'test1', 'listener2', 'Uncaught Error: test2']);
+
+             setTimeout(() => {
+               expect(logs).toEqual(['listener1', 'test1', 'listener2', 'Uncaught Error: test2']);
+               window.removeEventListener('unhandledrejection', unhandledRejection);
+               window.onerror = oriWindowOnError;
+               done();
+             });
+           } catch (e: any) {
+             window.onerror = oriWindowOnError;
+           }
+         });
     });
 
-    describe('unhandle promise rejection', () => {
+    // TODO: Re-enable via https://github.com/angular/angular/pull/41526
+    xdescribe('unhandle promise rejection', () => {
       const AsyncTestZoneSpec = (Zone as any)['AsyncTestZoneSpec'];
       const asyncTest = function(testFn: Function) {
         return (done: Function) => {
@@ -2571,6 +2817,7 @@ describe('Zone', function() {
                expect(evt.type).toEqual('unhandledrejection');
                expect(evt.promise.constructor.name).toEqual('Promise');
                expect(evt.reason.message).toBe('promise error');
+               evt.preventDefault();
              };
              window.addEventListener('unhandledrejection', listener1);
              window.addEventListener('unhandledrejection', listener2);

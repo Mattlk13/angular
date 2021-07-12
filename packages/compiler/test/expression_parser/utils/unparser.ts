@@ -6,7 +6,7 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {AbsoluteSourceSpan, AST, AstVisitor, ASTWithSource, Binary, BindingPipe, Chain, Conditional, FunctionCall, ImplicitReceiver, Interpolation, KeyedRead, KeyedWrite, LiteralArray, LiteralMap, LiteralPrimitive, MethodCall, NonNullAssert, ParseSpan, PrefixNot, PropertyRead, PropertyWrite, Quote, RecursiveAstVisitor, SafeMethodCall, SafePropertyRead} from '../../../src/expression_parser/ast';
+import {AST, AstVisitor, ASTWithSource, Binary, BindingPipe, Chain, Conditional, FunctionCall, ImplicitReceiver, Interpolation, KeyedRead, KeyedWrite, LiteralArray, LiteralMap, LiteralPrimitive, MethodCall, NonNullAssert, ParseSpan, PrefixNot, PropertyRead, PropertyWrite, Quote, RecursiveAstVisitor, SafeKeyedRead, SafeMethodCall, SafePropertyRead, ThisReceiver, Unary} from '../../../src/expression_parser/ast';
 import {DEFAULT_INTERPOLATION_CONFIG, InterpolationConfig} from '../../../src/ml_parser/interpolation_config';
 
 class Unparser implements AstVisitor {
@@ -33,6 +33,11 @@ class Unparser implements AstVisitor {
     this._expression +=
         ast.receiver instanceof ImplicitReceiver ? `${ast.name} = ` : `.${ast.name} = `;
     this._visit(ast.value);
+  }
+
+  visitUnary(ast: Unary, context: any) {
+    this._expression += ast.operator;
+    this._visit(ast.expr);
   }
 
   visitBinary(ast: Binary, context: any) {
@@ -82,6 +87,8 @@ class Unparser implements AstVisitor {
 
   visitImplicitReceiver(ast: ImplicitReceiver, context: any) {}
 
+  visitThisReceiver(ast: ThisReceiver, context: any) {}
+
   visitInterpolation(ast: Interpolation, context: any) {
     for (let i = 0; i < ast.strings.length; i++) {
       this._expression += ast.strings[i];
@@ -94,14 +101,14 @@ class Unparser implements AstVisitor {
   }
 
   visitKeyedRead(ast: KeyedRead, context: any) {
-    this._visit(ast.obj);
+    this._visit(ast.receiver);
     this._expression += '[';
     this._visit(ast.key);
     this._expression += ']';
   }
 
   visitKeyedWrite(ast: KeyedWrite, context: any) {
-    this._visit(ast.obj);
+    this._visit(ast.receiver);
     this._expression += '[';
     this._visit(ast.key);
     this._expression += '] = ';
@@ -186,6 +193,13 @@ class Unparser implements AstVisitor {
     this._expression += `${ast.prefix}:${ast.uninterpretedExpression}`;
   }
 
+  visitSafeKeyedRead(ast: SafeKeyedRead, context: any) {
+    this._visit(ast.receiver);
+    this._expression += '?.[';
+    this._visit(ast.key);
+    this._expression += ']';
+  }
+
   private _visit(ast: AST) {
     ast.visit(this);
   }
@@ -221,6 +235,9 @@ export function unparseWithSpan(
       this.recordUnparsed(ast, 'span', unparsedList);
       if (ast.hasOwnProperty('nameSpan')) {
         this.recordUnparsed(ast, 'nameSpan', unparsedList);
+      }
+      if (ast.hasOwnProperty('argumentSpan')) {
+        this.recordUnparsed(ast, 'argumentSpan', unparsedList);
       }
       ast.visit(this, unparsedList);
     }

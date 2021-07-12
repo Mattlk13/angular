@@ -6,22 +6,25 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import {compileDirectiveFromMetadata, ConstantPool, Expression, Identifiers, makeBindingParser, ParsedHostBindings, ParseError, parseHostBindings, R3DependencyMetadata, R3DirectiveMetadata, R3FactoryTarget, R3QueryMetadata, Statement, verifyHostBindings, WrappedNodeExpr} from '@angular/compiler';
+import {compileClassMetadata, compileDeclareClassMetadata, compileDeclareDirectiveFromMetadata, compileDirectiveFromMetadata, ConstantPool, Expression, ExternalExpr, FactoryTarget, getSafePropertyAccessString, makeBindingParser, ParsedHostBindings, ParseError, parseHostBindings, R3ClassMetadata, R3DirectiveMetadata, R3FactoryMetadata, R3QueryMetadata, Statement, verifyHostBindings, WrappedNodeExpr} from '@angular/compiler';
+import {emitDistinctChangesOnlyDefaultValue} from '@angular/compiler/src/core';
 import * as ts from 'typescript';
 
 import {ErrorCode, FatalDiagnosticError} from '../../diagnostics';
-import {DefaultImportRecorder, Reference} from '../../imports';
-import {InjectableClassRegistry, MetadataReader, MetadataRegistry} from '../../metadata';
-import {extractDirectiveGuards} from '../../metadata/src/util';
+import {Reference} from '../../imports';
+import {areTypeParametersEqual, extractSemanticTypeParameters, isArrayEqual, isSetEqual, isSymbolEqual, SemanticDepGraphUpdater, SemanticSymbol, SemanticTypeParameter} from '../../incremental/semantic_graph';
+import {BindingPropertyName, ClassPropertyMapping, ClassPropertyName, DirectiveTypeCheckMeta, InjectableClassRegistry, MetadataReader, MetadataRegistry, MetaType, TemplateGuardMeta} from '../../metadata';
+import {extractDirectiveTypeCheckMeta} from '../../metadata/src/util';
 import {DynamicValue, EnumValue, PartialEvaluator} from '../../partial_evaluator';
+import {PerfEvent, PerfRecorder} from '../../perf';
 import {ClassDeclaration, ClassMember, ClassMemberKind, Decorator, filterToMembersWithDecorator, ReflectionHost, reflectObjectLiteral} from '../../reflection';
 import {LocalModuleScopeRegistry} from '../../scope';
 import {AnalysisOutput, CompileResult, DecoratorHandler, DetectResult, HandlerFlags, HandlerPrecedence, ResolveResult} from '../../transform';
 
-import {getDirectiveDiagnostics, getProviderDiagnostics, getUndecoratedClassWithAngularFeaturesDiagnostic} from './diagnostics';
-import {compileNgFactoryDefField} from './factory';
-import {generateSetClassMetadataCall} from './metadata';
-import {createSourceSpan, findAngularDecorator, getConstructorDependencies, isAngularDecorator, readBaseClass, resolveProvidersRequiringFactory, unwrapConstructorDependencies, unwrapExpression, unwrapForwardRef, validateConstructorDependencies, wrapFunctionExpressionsInParens, wrapTypeReference} from './util';
+import {createValueHasWrongTypeError, getDirectiveDiagnostics, getProviderDiagnostics, getUndecoratedClassWithAngularFeaturesDiagnostic} from './diagnostics';
+import {compileDeclareFactory, compileNgFactoryDefField} from './factory';
+import {extractClassMetadata} from './metadata';
+import {compileResults, createSourceSpan, findAngularDecorator, getConstructorDependencies, isAngularDecorator, readBaseClass, resolveProvidersRequiringFactory, toFactoryMetadata, tryUnwrapForwardRef, unwrapConstructorDependencies, unwrapExpression, validateConstructorDependencies, wrapFunctionExpressionsInParens, wrapTypeReference} from './util';
 
 const EMPTY_OBJECT: {[key: string]: string} = {};
 const FIELD_DECORATORS = [
@@ -35,21 +38,149 @@ const LIFECYCLE_HOOKS = new Set([
 
 export interface DirectiveHandlerData {
   baseClass: Reference<ClassDeclaration>|'dynamic'|null;
-  guards: ReturnType<typeof extractDirectiveGuards>;
+  typeCheckMeta: DirectiveTypeCheckMeta;
   meta: R3DirectiveMetadata;
-  metadataStmt: Statement|null;
+  classMetadata: R3ClassMetadata|null;
   providersRequiringFactory: Set<Reference<ClassDeclaration>>|null;
+  inputs: ClassPropertyMapping;
+  outputs: ClassPropertyMapping;
+  isPoisoned: boolean;
+  isStructural: boolean;
+}
+
+/**
+ * Represents an Angular directive. Components are represented by `ComponentSymbol`, which inherits
+ * from this symbol.
+ */
+export class DirectiveSymbol extends SemanticSymbol {
+  baseClass: SemanticSymbol|null = null;
+
+  constructor(
+      decl: ClassDeclaration, public readonly selector: string|null,
+      public readonly inputs: ClassPropertyMapping, public readonly outputs: ClassPropertyMapping,
+      public readonly exportAs: string[]|null,
+      public readonly typeCheckMeta: DirectiveTypeCheckMeta,
+      public readonly typeParameters: SemanticTypeParameter[]|null) {
+    super(decl);
+  }
+
+  isPublicApiAffected(previousSymbol: SemanticSymbol): boolean {
+    // Note: since components and directives have exactly the same items contributing to their
+    // public API, it is okay for a directive to change into a component and vice versa without
+    // the API being affected.
+    if (!(previousSymbol instanceof DirectiveSymbol)) {
+      return true;
+    }
+
+    // Directives and components have a public API of:
+    //  1. Their selector.
+    //  2. The binding names of their inputs and outputs; a change in ordering is also considered
+    //     to be a change in public API.
+    //  3. The list of exportAs names and its ordering.
+    return this.selector !== previousSymbol.selector ||
+        !isArrayEqual(this.inputs.propertyNames, previousSymbol.inputs.propertyNames) ||
+        !isArrayEqual(this.outputs.propertyNames, previousSymbol.outputs.propertyNames) ||
+        !isArrayEqual(this.exportAs, previousSymbol.exportAs);
+  }
+
+  isTypeCheckApiAffected(previousSymbol: SemanticSymbol): boolean {
+    // If the public API of the directive has changed, then so has its type-check API.
+    if (this.isPublicApiAffected(previousSymbol)) {
+      return true;
+    }
+
+    if (!(previousSymbol instanceof DirectiveSymbol)) {
+      return true;
+    }
+
+    // The type-check block also depends on the class property names, as writes property bindings
+    // directly into the backing fields.
+    if (!isArrayEqual(
+            Array.from(this.inputs), Array.from(previousSymbol.inputs), isInputMappingEqual) ||
+        !isArrayEqual(
+            Array.from(this.outputs), Array.from(previousSymbol.outputs), isInputMappingEqual)) {
+      return true;
+    }
+
+    // The type parameters of a directive are emitted into the type constructors in the type-check
+    // block of a component, so if the type parameters are not considered equal then consider the
+    // type-check API of this directive to be affected.
+    if (!areTypeParametersEqual(this.typeParameters, previousSymbol.typeParameters)) {
+      return true;
+    }
+
+    // The type-check metadata is used during TCB code generation, so any changes should invalidate
+    // prior type-check files.
+    if (!isTypeCheckMetaEqual(this.typeCheckMeta, previousSymbol.typeCheckMeta)) {
+      return true;
+    }
+
+    // Changing the base class of a directive means that its inputs/outputs etc may have changed,
+    // so the type-check block of components that use this directive needs to be regenerated.
+    if (!isBaseClassEqual(this.baseClass, previousSymbol.baseClass)) {
+      return true;
+    }
+
+    return false;
+  }
+}
+
+function isInputMappingEqual(
+    current: [ClassPropertyName, BindingPropertyName],
+    previous: [ClassPropertyName, BindingPropertyName]): boolean {
+  return current[0] === previous[0] && current[1] === previous[1];
+}
+
+function isTypeCheckMetaEqual(
+    current: DirectiveTypeCheckMeta, previous: DirectiveTypeCheckMeta): boolean {
+  if (current.hasNgTemplateContextGuard !== previous.hasNgTemplateContextGuard) {
+    return false;
+  }
+  if (current.isGeneric !== previous.isGeneric) {
+    // Note: changes in the number of type parameters is also considered in `areTypeParametersEqual`
+    // so this check is technically not needed; it is done anyway for completeness in terms of
+    // whether the `DirectiveTypeCheckMeta` struct itself compares equal or not.
+    return false;
+  }
+  if (!isArrayEqual(current.ngTemplateGuards, previous.ngTemplateGuards, isTemplateGuardEqual)) {
+    return false;
+  }
+  if (!isSetEqual(current.coercedInputFields, previous.coercedInputFields)) {
+    return false;
+  }
+  if (!isSetEqual(current.restrictedInputFields, previous.restrictedInputFields)) {
+    return false;
+  }
+  if (!isSetEqual(current.stringLiteralInputFields, previous.stringLiteralInputFields)) {
+    return false;
+  }
+  if (!isSetEqual(current.undeclaredInputFields, previous.undeclaredInputFields)) {
+    return false;
+  }
+  return true;
+}
+
+function isTemplateGuardEqual(current: TemplateGuardMeta, previous: TemplateGuardMeta): boolean {
+  return current.inputName === previous.inputName && current.type === previous.type;
+}
+
+function isBaseClassEqual(current: SemanticSymbol|null, previous: SemanticSymbol|null): boolean {
+  if (current === null || previous === null) {
+    return current === previous;
+  }
+
+  return isSymbolEqual(current, previous);
 }
 
 export class DirectiveDecoratorHandler implements
-    DecoratorHandler<Decorator|null, DirectiveHandlerData, unknown> {
+    DecoratorHandler<Decorator|null, DirectiveHandlerData, DirectiveSymbol, unknown> {
   constructor(
       private reflector: ReflectionHost, private evaluator: PartialEvaluator,
       private metaRegistry: MetadataRegistry, private scopeRegistry: LocalModuleScopeRegistry,
-      private metaReader: MetadataReader, private defaultImportRecorder: DefaultImportRecorder,
-      private injectableRegistry: InjectableClassRegistry, private isCore: boolean,
+      private metaReader: MetadataReader, private injectableRegistry: InjectableClassRegistry,
+      private isCore: boolean, private semanticDepGraphUpdater: SemanticDepGraphUpdater|null,
       private annotateForClosureCompiler: boolean,
-      private compileUndecoratedClassesWithAngularFeatures: boolean) {}
+      private compileUndecoratedClassesWithAngularFeatures: boolean, private perf: PerfRecorder) {}
 
   readonly precedence = HandlerPrecedence.PRIMARY;
   readonly name = DirectiveDecoratorHandler.name;
@@ -80,14 +211,15 @@ export class DirectiveDecoratorHandler implements
       return {diagnostics: [getUndecoratedClassWithAngularFeaturesDiagnostic(node)]};
     }
 
-    const directiveResult = extractDirectiveMetadata(
-        node, decorator, this.reflector, this.evaluator, this.defaultImportRecorder, this.isCore,
-        flags, this.annotateForClosureCompiler);
-    const analysis = directiveResult && directiveResult.metadata;
+    this.perf.eventCount(PerfEvent.AnalyzeDirective);
 
-    if (analysis === undefined) {
+    const directiveResult = extractDirectiveMetadata(
+        node, decorator, this.reflector, this.evaluator, this.isCore, flags,
+        this.annotateForClosureCompiler);
+    if (directiveResult === undefined) {
       return {};
     }
+    const analysis = directiveResult.metadata;
 
     let providersRequiringFactory: Set<Reference<ClassDeclaration>>|null = null;
     if (directiveResult !== undefined && directiveResult.decorator.has('providers')) {
@@ -97,15 +229,26 @@ export class DirectiveDecoratorHandler implements
 
     return {
       analysis: {
+        inputs: directiveResult.inputs,
+        outputs: directiveResult.outputs,
         meta: analysis,
-        metadataStmt: generateSetClassMetadataCall(
-            node, this.reflector, this.defaultImportRecorder, this.isCore,
-            this.annotateForClosureCompiler),
+        classMetadata: extractClassMetadata(
+            node, this.reflector, this.isCore, this.annotateForClosureCompiler),
         baseClass: readBaseClass(node, this.reflector, this.evaluator),
-        guards: extractDirectiveGuards(node, this.reflector),
-        providersRequiringFactory
+        typeCheckMeta: extractDirectiveTypeCheckMeta(node, directiveResult.inputs, this.reflector),
+        providersRequiringFactory,
+        isPoisoned: false,
+        isStructural: directiveResult.isStructural,
       }
     };
+  }
+
+  symbol(node: ClassDeclaration, analysis: Readonly<DirectiveHandlerData>): DirectiveSymbol {
+    const typeParameters = extractSemanticTypeParameters(node);
+
+    return new DirectiveSymbol(
+        node, analysis.meta.selector, analysis.inputs, analysis.outputs, analysis.meta.exportAs,
+        analysis.typeCheckMeta, typeParameters);
   }
 
   register(node: ClassDeclaration, analysis: Readonly<DirectiveHandlerData>): void {
@@ -113,24 +256,31 @@ export class DirectiveDecoratorHandler implements
     // the information about the directive is available during the compile() phase.
     const ref = new Reference(node);
     this.metaRegistry.registerDirectiveMetadata({
+      type: MetaType.Directive,
       ref,
       name: node.name.text,
       selector: analysis.meta.selector,
       exportAs: analysis.meta.exportAs,
-      inputs: analysis.meta.inputs,
-      outputs: analysis.meta.outputs,
+      inputs: analysis.inputs,
+      outputs: analysis.outputs,
       queries: analysis.meta.queries.map(query => query.propertyName),
       isComponent: false,
       baseClass: analysis.baseClass,
-      ...analysis.guards,
+      ...analysis.typeCheckMeta,
+      isPoisoned: analysis.isPoisoned,
+      isStructural: analysis.isStructural,
     });
 
     this.injectableRegistry.registerInjectable(node);
   }
 
-  resolve(node: ClassDeclaration, analysis: DirectiveHandlerData): ResolveResult<unknown> {
-    const diagnostics: ts.Diagnostic[] = [];
+  resolve(node: ClassDeclaration, analysis: DirectiveHandlerData, symbol: DirectiveSymbol):
+      ResolveResult<unknown> {
+    if (this.semanticDepGraphUpdater !== null && analysis.baseClass instanceof Reference) {
+      symbol.baseClass = this.semanticDepGraphUpdater.getSymbol(analysis.baseClass.node);
+    }
 
+    const diagnostics: ts.Diagnostic[] = [];
     if (analysis.providersRequiringFactory !== null &&
         analysis.meta.providers instanceof WrappedNodeExpr) {
       const providerDiagnostics = getProviderDiagnostics(
@@ -148,24 +298,26 @@ export class DirectiveDecoratorHandler implements
     return {diagnostics: diagnostics.length > 0 ? diagnostics : undefined};
   }
 
-  compile(
+  compileFull(
       node: ClassDeclaration, analysis: Readonly<DirectiveHandlerData>,
       resolution: Readonly<unknown>, pool: ConstantPool): CompileResult[] {
-    const meta = analysis.meta;
-    const res = compileDirectiveFromMetadata(meta, pool, makeBindingParser());
-    const factoryRes = compileNgFactoryDefField(
-        {...meta, injectFn: Identifiers.directiveInject, target: R3FactoryTarget.Directive});
-    if (analysis.metadataStmt !== null) {
-      factoryRes.statements.push(analysis.metadataStmt);
-    }
-    return [
-      factoryRes, {
-        name: 'ɵdir',
-        initializer: res.expression,
-        statements: [],
-        type: res.type,
-      }
-    ];
+    const fac = compileNgFactoryDefField(toFactoryMetadata(analysis.meta, FactoryTarget.Directive));
+    const def = compileDirectiveFromMetadata(analysis.meta, pool, makeBindingParser());
+    const classMetadata = analysis.classMetadata !== null ?
+        compileClassMetadata(analysis.classMetadata).toStmt() :
+        null;
+    return compileResults(fac, def, classMetadata, 'ɵdir');
+  }
+
+  compilePartial(
+      node: ClassDeclaration, analysis: Readonly<DirectiveHandlerData>,
+      resolution: Readonly<unknown>): CompileResult[] {
+    const fac = compileDeclareFactory(toFactoryMetadata(analysis.meta, FactoryTarget.Directive));
+    const def = compileDeclareDirectiveFromMetadata(analysis.meta);
+    const classMetadata = analysis.classMetadata !== null ?
+        compileDeclareClassMetadata(analysis.classMetadata).toStmt() :
+        null;
+    return compileResults(fac, def, classMetadata, 'ɵdir');
   }
 
   /**
@@ -198,9 +350,14 @@ export class DirectiveDecoratorHandler implements
  */
 export function extractDirectiveMetadata(
     clazz: ClassDeclaration, decorator: Readonly<Decorator|null>, reflector: ReflectionHost,
-    evaluator: PartialEvaluator, defaultImportRecorder: DefaultImportRecorder, isCore: boolean,
-    flags: HandlerFlags, annotateForClosureCompiler: boolean, defaultSelector: string|null = null):
-    {decorator: Map<string, ts.Expression>, metadata: R3DirectiveMetadata}|undefined {
+    evaluator: PartialEvaluator, isCore: boolean, flags: HandlerFlags,
+    annotateForClosureCompiler: boolean, defaultSelector: string|null = null): {
+  decorator: Map<string, ts.Expression>,
+  metadata: R3DirectiveMetadata,
+  inputs: ClassPropertyMapping,
+  outputs: ClassPropertyMapping,
+  isStructural: boolean;
+}|undefined {
   let directive: Map<string, ts.Expression>;
   if (decorator === null || decorator.args === null || decorator.args.length === 0) {
     directive = new Map<string, ts.Expression>();
@@ -278,8 +435,7 @@ export function extractDirectiveMetadata(
     const expr = directive.get('selector')!;
     const resolved = evaluator.evaluate(expr);
     if (typeof resolved !== 'string') {
-      throw new FatalDiagnosticError(
-          ErrorCode.VALUE_HAS_WRONG_TYPE, expr, `selector must be a string`);
+      throw createValueHasWrongTypeError(expr, resolved, `selector must be a string`);
     }
     // use default selector in case selector is an empty string
     selector = resolved === '' ? defaultSelector : resolved;
@@ -310,28 +466,33 @@ export function extractDirectiveMetadata(
     const expr = directive.get('exportAs')!;
     const resolved = evaluator.evaluate(expr);
     if (typeof resolved !== 'string') {
-      throw new FatalDiagnosticError(
-          ErrorCode.VALUE_HAS_WRONG_TYPE, expr, `exportAs must be a string`);
+      throw createValueHasWrongTypeError(expr, resolved, `exportAs must be a string`);
     }
     exportAs = resolved.split(',').map(part => part.trim());
   }
 
-  const rawCtorDeps = getConstructorDependencies(clazz, reflector, defaultImportRecorder, isCore);
-  let ctorDeps: R3DependencyMetadata[]|'invalid'|null;
+  const rawCtorDeps = getConstructorDependencies(clazz, reflector, isCore);
 
   // Non-abstract directives (those with a selector) require valid constructor dependencies, whereas
   // abstract directives are allowed to have invalid dependencies, given that a subclass may call
   // the constructor explicitly.
-  if (selector !== null) {
-    ctorDeps = validateConstructorDependencies(clazz, rawCtorDeps);
-  } else {
-    ctorDeps = unwrapConstructorDependencies(rawCtorDeps);
-  }
+  const ctorDeps = selector !== null ? validateConstructorDependencies(clazz, rawCtorDeps) :
+                                       unwrapConstructorDependencies(rawCtorDeps);
+
+  // Structural directives must have a `TemplateRef` dependency.
+  const isStructural = ctorDeps !== null && ctorDeps !== 'invalid' &&
+      ctorDeps.some(
+          dep => (dep.token instanceof ExternalExpr) &&
+              dep.token.value.moduleName === '@angular/core' &&
+              dep.token.value.name === 'TemplateRef');
 
   // Detect if the component inherits from another class
   const usesInheritance = reflector.hasBaseClass(clazz);
   const type = wrapTypeReference(reflector, clazz);
   const internalType = new WrappedNodeExpr(reflector.getInternalNameOfClass(clazz));
+
+  const inputs = ClassPropertyMapping.fromMappedObject({...inputsFromMeta, ...inputsFromFields});
+  const outputs = ClassPropertyMapping.fromMappedObject({...outputsFromMeta, ...outputsFromFields});
 
   const metadata: R3DirectiveMetadata = {
     name: clazz.name.text,
@@ -340,8 +501,8 @@ export function extractDirectiveMetadata(
     lifecycle: {
       usesOnChanges,
     },
-    inputs: {...inputsFromMeta, ...inputsFromFields},
-    outputs: {...outputsFromMeta, ...outputsFromFields},
+    inputs: inputs.toJointMappedObject(),
+    outputs: outputs.toDirectMappedObject(),
     queries,
     viewQueries,
     selector,
@@ -354,7 +515,13 @@ export function extractDirectiveMetadata(
     exportAs,
     providers
   };
-  return {decorator: directive, metadata};
+  return {
+    decorator: directive,
+    metadata,
+    inputs,
+    outputs,
+    isStructural,
+  };
 }
 
 export function extractQueryMetadata(
@@ -365,7 +532,7 @@ export function extractQueryMetadata(
         ErrorCode.DECORATOR_ARITY_WRONG, exprNode, `@${name} must have arguments`);
   }
   const first = name === 'ViewChild' || name === 'ContentChild';
-  const node = unwrapForwardRef(args[0], reflector);
+  const node = tryUnwrapForwardRef(args[0], reflector) ?? args[0];
   const arg = evaluator.evaluate(node);
 
   /** Whether or not this query should collect only static results (see view/api.ts)  */
@@ -381,14 +548,14 @@ export function extractQueryMetadata(
   } else if (isStringArrayOrDie(arg, `@${name} predicate`, node)) {
     predicate = arg;
   } else {
-    throw new FatalDiagnosticError(
-        ErrorCode.VALUE_HAS_WRONG_TYPE, node, `@${name} predicate cannot be interpreted`);
+    throw createValueHasWrongTypeError(node, arg, `@${name} predicate cannot be interpreted`);
   }
 
   // Extract the read and descendants options.
   let read: Expression|null = null;
   // The default value for descendants is true for every decorator except @ContentChildren.
   let descendants: boolean = name !== 'ContentChildren';
+  let emitDistinctChangesOnly: boolean = emitDistinctChangesOnlyDefaultValue;
   if (args.length === 2) {
     const optionsExpr = unwrapExpression(args[1]);
     if (!ts.isObjectLiteralExpression(optionsExpr)) {
@@ -405,18 +572,28 @@ export function extractQueryMetadata(
       const descendantsExpr = options.get('descendants')!;
       const descendantsValue = evaluator.evaluate(descendantsExpr);
       if (typeof descendantsValue !== 'boolean') {
-        throw new FatalDiagnosticError(
-            ErrorCode.VALUE_HAS_WRONG_TYPE, descendantsExpr,
-            `@${name} options.descendants must be a boolean`);
+        throw createValueHasWrongTypeError(
+            descendantsExpr, descendantsValue, `@${name} options.descendants must be a boolean`);
       }
       descendants = descendantsValue;
+    }
+
+    if (options.has('emitDistinctChangesOnly')) {
+      const emitDistinctChangesOnlyExpr = options.get('emitDistinctChangesOnly')!;
+      const emitDistinctChangesOnlyValue = evaluator.evaluate(emitDistinctChangesOnlyExpr);
+      if (typeof emitDistinctChangesOnlyValue !== 'boolean') {
+        throw createValueHasWrongTypeError(
+            emitDistinctChangesOnlyExpr, emitDistinctChangesOnlyValue,
+            `@${name} options.emitDistinctChangesOnly must be a boolean`);
+      }
+      emitDistinctChangesOnly = emitDistinctChangesOnlyValue;
     }
 
     if (options.has('static')) {
       const staticValue = evaluator.evaluate(options.get('static')!);
       if (typeof staticValue !== 'boolean') {
-        throw new FatalDiagnosticError(
-            ErrorCode.VALUE_HAS_WRONG_TYPE, node, `@${name} options.static must be a boolean`);
+        throw createValueHasWrongTypeError(
+            node, staticValue, `@${name} options.static must be a boolean`);
       }
       isStatic = staticValue;
     }
@@ -434,6 +611,7 @@ export function extractQueryMetadata(
     descendants,
     read,
     static: isStatic,
+    emitDistinctChangesOnly,
   };
 }
 
@@ -451,12 +629,20 @@ export function extractQueriesFromDecorator(
   }
   reflectObjectLiteral(queryData).forEach((queryExpr, propertyName) => {
     queryExpr = unwrapExpression(queryExpr);
-    if (!ts.isNewExpression(queryExpr) || !ts.isIdentifier(queryExpr.expression)) {
+    if (!ts.isNewExpression(queryExpr)) {
       throw new FatalDiagnosticError(
           ErrorCode.VALUE_HAS_WRONG_TYPE, queryData,
           'Decorator query metadata must be an instance of a query type');
     }
-    const type = reflector.getImportOfIdentifier(queryExpr.expression);
+    const queryType = ts.isPropertyAccessExpression(queryExpr.expression) ?
+        queryExpr.expression.name :
+        queryExpr.expression;
+    if (!ts.isIdentifier(queryType)) {
+      throw new FatalDiagnosticError(
+          ErrorCode.VALUE_HAS_WRONG_TYPE, queryData,
+          'Decorator query metadata must be an instance of a query type');
+    }
+    const type = reflector.getImportOfIdentifier(queryType);
     if (type === null || (!isCore && type.from !== '@angular/core') ||
         !QUERY_TYPES.has(type.name)) {
       throw new FatalDiagnosticError(
@@ -482,9 +668,8 @@ function isStringArrayOrDie(value: any, name: string, node: ts.Expression): valu
 
   for (let i = 0; i < value.length; i++) {
     if (typeof value[i] !== 'string') {
-      throw new FatalDiagnosticError(
-          ErrorCode.VALUE_HAS_WRONG_TYPE, node,
-          `Failed to resolve ${name} at position ${i} to a string`);
+      throw createValueHasWrongTypeError(
+          node, value[i], `Failed to resolve ${name} at position ${i} to a string`);
     }
   }
   return true;
@@ -501,9 +686,8 @@ export function parseFieldArrayValue(
   const expression = directive.get(field)!;
   const value = evaluator.evaluate(expression);
   if (!isStringArrayOrDie(value, field, expression)) {
-    throw new FatalDiagnosticError(
-        ErrorCode.VALUE_HAS_WRONG_TYPE, expression,
-        `Failed to resolve @Directive.${field} to a string array`);
+    throw createValueHasWrongTypeError(
+        expression, value, `Failed to resolve @Directive.${field} to a string array`);
   }
 
   return value;
@@ -548,8 +732,8 @@ function parseDecoratedFields(
       } else if (decorator.args.length === 1) {
         const property = evaluator.evaluate(decorator.args[0]);
         if (typeof property !== 'string') {
-          throw new FatalDiagnosticError(
-              ErrorCode.VALUE_HAS_WRONG_TYPE, Decorator.nodeForError(decorator),
+          throw createValueHasWrongTypeError(
+              Decorator.nodeForError(decorator), property,
               `@${decorator.name} decorator argument must resolve to a string`);
         }
         results[fieldName] = mapValueResolver(property, fieldName);
@@ -613,8 +797,8 @@ function evaluateHostExpressionBindings(
     hostExpr: ts.Expression, evaluator: PartialEvaluator): ParsedHostBindings {
   const hostMetaMap = evaluator.evaluate(hostExpr);
   if (!(hostMetaMap instanceof Map)) {
-    throw new FatalDiagnosticError(
-        ErrorCode.VALUE_HAS_WRONG_TYPE, hostExpr, `Decorator host metadata must be an object`);
+    throw createValueHasWrongTypeError(
+        hostExpr, hostMetaMap, `Decorator host metadata must be an object`);
   }
   const hostMetadata: StringMap<string|Expression> = {};
   hostMetaMap.forEach((value, key) => {
@@ -624,8 +808,8 @@ function evaluateHostExpressionBindings(
     }
 
     if (typeof key !== 'string') {
-      throw new FatalDiagnosticError(
-          ErrorCode.VALUE_HAS_WRONG_TYPE, hostExpr,
+      throw createValueHasWrongTypeError(
+          hostExpr, key,
           `Decorator host metadata must be a string -> string object, but found unparseable key`);
     }
 
@@ -634,8 +818,8 @@ function evaluateHostExpressionBindings(
     } else if (value instanceof DynamicValue) {
       hostMetadata[key] = new WrappedNodeExpr(value.node as ts.Expression);
     } else {
-      throw new FatalDiagnosticError(
-          ErrorCode.VALUE_HAS_WRONG_TYPE, hostExpr,
+      throw createValueHasWrongTypeError(
+          hostExpr, value,
           `Decorator host metadata must be a string -> string object, but found unparseable value`);
     }
   });
@@ -678,15 +862,19 @@ export function extractHostBindings(
 
             const resolved = evaluator.evaluate(decorator.args[0]);
             if (typeof resolved !== 'string') {
-              throw new FatalDiagnosticError(
-                  ErrorCode.VALUE_HAS_WRONG_TYPE, Decorator.nodeForError(decorator),
+              throw createValueHasWrongTypeError(
+                  Decorator.nodeForError(decorator), resolved,
                   `@HostBinding's argument must be a string`);
             }
 
             hostPropertyName = resolved;
           }
 
-          bindings.properties[hostPropertyName] = member.name;
+          // Since this is a decorator, we know that the value is a class member. Always access it
+          // through `this` so that further down the line it can't be confused for a literal value
+          // (e.g. if there's a property called `true`). There is no size penalty, because all
+          // values (except literals) are converted to `ctx.propName` eventually.
+          bindings.properties[hostPropertyName] = getSafePropertyAccessString('this', member.name);
         });
       });
 
@@ -704,8 +892,8 @@ export function extractHostBindings(
 
             const resolved = evaluator.evaluate(decorator.args[0]);
             if (typeof resolved !== 'string') {
-              throw new FatalDiagnosticError(
-                  ErrorCode.VALUE_HAS_WRONG_TYPE, decorator.args[0],
+              throw createValueHasWrongTypeError(
+                  decorator.args[0], resolved,
                   `@HostListener's event name argument must be a string`);
             }
 
@@ -715,8 +903,8 @@ export function extractHostBindings(
               const expression = decorator.args[1];
               const resolvedArgs = evaluator.evaluate(decorator.args[1]);
               if (!isStringArrayOrDie(resolvedArgs, '@HostListener.args', expression)) {
-                throw new FatalDiagnosticError(
-                    ErrorCode.VALUE_HAS_WRONG_TYPE, decorator.args[1],
+                throw createValueHasWrongTypeError(
+                    decorator.args[1], resolvedArgs,
                     `@HostListener's second argument must be a string array`);
               }
               args = resolvedArgs;

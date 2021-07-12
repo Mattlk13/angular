@@ -15,22 +15,13 @@ import {FactoryGenerator, isShim, ShimAdapter, ShimReferenceTagger, SummaryGener
 import {FactoryTracker, PerFileShimGenerator, TopLevelShimGenerator} from '../../shims/api';
 import {TypeCheckShimGenerator} from '../../typecheck';
 import {normalizeSeparators} from '../../util/src/path';
-import {getRootDirs, isDtsPath, isNonDeclarationTsPath} from '../../util/src/typescript';
+import {getRootDirs, isNonDeclarationTsPath, RequiredDelegations} from '../../util/src/typescript';
 import {ExtendedTsCompilerHost, NgCompilerAdapter, NgCompilerOptions, UnifiedModulesHost} from '../api';
 
 // A persistent source of bugs in CompilerHost delegation has been the addition by TS of new,
 // optional methods on ts.CompilerHost. Since these methods are optional, it's not a type error that
 // the delegating host doesn't implement or delegate them. This causes subtle runtime failures. No
 // more. This infrastructure ensures that failing to delegate a method is a compile-time error.
-
-/**
- * Represents the `ExtendedTsCompilerHost` interface, with a transformation applied that turns all
- * methods (even optional ones) into required fields (which may be `undefined`, if the method was
- * optional).
- */
-export type RequiredCompilerHostDelegations = {
-  [M in keyof Required<ExtendedTsCompilerHost>]: ExtendedTsCompilerHost[M];
-};
 
 /**
  * Delegates all methods of `ExtendedTsCompilerHost` to a delegate, with the exception of
@@ -40,7 +31,7 @@ export type RequiredCompilerHostDelegations = {
  * generated for this class.
  */
 export class DelegatingCompilerHost implements
-    Omit<RequiredCompilerHostDelegations, 'getSourceFile'|'fileExists'> {
+    Omit<RequiredDelegations<ExtendedTsCompilerHost>, 'getSourceFile'|'fileExists'> {
   constructor(protected delegate: ExtendedTsCompilerHost) {}
 
   private delegateMethod<M extends keyof ExtendedTsCompilerHost>(name: M):
@@ -68,6 +59,7 @@ export class DelegatingCompilerHost implements
   readDirectory = this.delegateMethod('readDirectory');
   readFile = this.delegateMethod('readFile');
   readResource = this.delegateMethod('readResource');
+  transformResource = this.delegateMethod('transformResource');
   realpath = this.delegateMethod('realpath');
   resolveModuleNames = this.delegateMethod('resolveModuleNames');
   resolveTypeReferenceDirectives = this.delegateMethod('resolveTypeReferenceDirectives');
@@ -89,7 +81,7 @@ export class DelegatingCompilerHost implements
  * `ExtendedTsCompilerHost` methods whenever present.
  */
 export class NgCompilerHost extends DelegatingCompilerHost implements
-    RequiredCompilerHostDelegations, ExtendedTsCompilerHost, NgCompilerAdapter {
+    RequiredDelegations<ExtendedTsCompilerHost>, ExtendedTsCompilerHost, NgCompilerAdapter {
   readonly factoryTracker: FactoryTracker|null = null;
   readonly entryPoint: AbsoluteFsPath|null = null;
   readonly constructionDiagnostics: ts.Diagnostic[];
@@ -110,6 +102,12 @@ export class NgCompilerHost extends DelegatingCompilerHost implements
     this.constructionDiagnostics = diagnostics;
     this.inputFiles = [...inputFiles, ...shimAdapter.extraInputFiles];
     this.rootDirs = rootDirs;
+
+    if (this.resolveModuleNames === undefined) {
+      // In order to reuse the module resolution cache during the creation of the type-check
+      // program, we'll need to provide `resolveModuleNames` if the delegate did not provide one.
+      this.resolveModuleNames = this.createCachedResolveModuleNamesFunction();
+    }
   }
 
   /**
@@ -271,5 +269,18 @@ export class NgCompilerHost extends DelegatingCompilerHost implements
 
   get unifiedModulesHost(): UnifiedModulesHost|null {
     return this.fileNameToModuleName !== undefined ? this as UnifiedModulesHost : null;
+  }
+
+  private createCachedResolveModuleNamesFunction(): ts.CompilerHost['resolveModuleNames'] {
+    const moduleResolutionCache = ts.createModuleResolutionCache(
+        this.getCurrentDirectory(), this.getCanonicalFileName.bind(this));
+
+    return (moduleNames, containingFile, reusedNames, redirectedReference, options) => {
+      return moduleNames.map(moduleName => {
+        const module = ts.resolveModuleName(
+            moduleName, containingFile, options, this, moduleResolutionCache, redirectedReference);
+        return module.resolvedModule;
+      });
+    };
   }
 }

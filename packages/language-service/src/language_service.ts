@@ -75,7 +75,6 @@ class LanguageServiceImpl implements ng.LanguageService {
     if (templateInfo) {
       return getDefinitionAndBoundSpan(templateInfo, position);
     }
-
     // Attempt to get Angular-specific definitions in a TypeScript file, like templates defined
     // in a `templateUrl` property.
     if (fileName.endsWith('.ts')) {

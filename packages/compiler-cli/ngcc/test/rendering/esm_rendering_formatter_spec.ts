@@ -12,8 +12,9 @@ import * as ts from 'typescript';
 import {absoluteFrom, getFileSystem, getSourceFileOrError} from '../../../src/ngtsc/file_system';
 import {runInEachFileSystem, TestFile} from '../../../src/ngtsc/file_system/testing';
 import {NoopImportRewriter} from '../../../src/ngtsc/imports';
+import {MockLogger} from '../../../src/ngtsc/logging/testing';
+import {loadFakeCore, loadTestFiles} from '../../../src/ngtsc/testing';
 import {ImportManager} from '../../../src/ngtsc/translator';
-import {loadFakeCore, loadTestFiles} from '../../../test/helpers';
 import {DecorationAnalyzer} from '../../src/analysis/decoration_analyzer';
 import {ModuleWithProvidersAnalyzer} from '../../src/analysis/module_with_providers_analyzer';
 import {NgccReferencesRegistry} from '../../src/analysis/ngcc_references_registry';
@@ -21,7 +22,6 @@ import {SwitchMarkerAnalyzer} from '../../src/analysis/switch_marker_analyzer';
 import {IMPORT_PREFIX} from '../../src/constants';
 import {Esm2015ReflectionHost} from '../../src/host/esm2015_host';
 import {EsmRenderingFormatter} from '../../src/rendering/esm_rendering_formatter';
-import {MockLogger} from '../helpers/mock_logger';
 import {getRootFiles, makeTestEntryPointBundle} from '../helpers/utils';
 
 function setup(files: TestFile[], dtsFiles?: TestFile[]) {
@@ -40,7 +40,7 @@ function setup(files: TestFile[], dtsFiles?: TestFile[]) {
       new DecorationAnalyzer(fs, bundle, host, referencesRegistry).analyzeProgram();
   const switchMarkerAnalyses = new SwitchMarkerAnalyzer(host, bundle.entryPoint.packagePath)
                                    .analyzeProgram(bundle.src.program);
-  const renderer = new EsmRenderingFormatter(host, false);
+  const renderer = new EsmRenderingFormatter(fs, host, false);
   const importManager = new ImportManager(new NoopImportRewriter(), IMPORT_PREFIX);
   return {
     host,
@@ -69,7 +69,7 @@ B.decorators = [
   { type: OtherB },
   { type: Directive, args: [{ selector: '[b]' }] }
 ];
-var C_1;
+let C_1;
 let C = C_1 = class C {};
 C.decorators = [
   { type: Directive, args: [{ selector: '[c]' }] },
@@ -111,7 +111,7 @@ B.decorators = [
 ];
 return B;
 })();
-var C_1;
+let C_1;
 let C = C_1 = /** @class */ (() => {
 class C {}
 C.decorators = [
@@ -156,8 +156,8 @@ runInEachFileSystem(() => {
           renderer.addImports(
               output,
               [
-                {specifier: '@angular/core', qualifier: 'i0'},
-                {specifier: '@angular/common', qualifier: 'i1'}
+                {specifier: '@angular/core', qualifier: ts.createIdentifier('i0')},
+                {specifier: '@angular/common', qualifier: ts.createIdentifier('i1')}
               ],
               sourceFile);
           expect(output.toString()).toContain(`/* A copyright notice */
@@ -231,7 +231,8 @@ const x = 3;
           const file = getSourceFileOrError(program, _('/node_modules/test-package/some/file.js'));
           const output = new MagicString(PROGRAM.contents);
           renderer.addConstants(output, 'const x = 3;', file);
-          renderer.addImports(output, [{specifier: '@angular/core', qualifier: 'i0'}], file);
+          renderer.addImports(
+              output, [{specifier: '@angular/core', qualifier: ts.createIdentifier('i0')}], file);
           expect(output.toString()).toContain(`
 import {Directive} from '@angular/core';
 import * as i0 from '@angular/core';
@@ -432,7 +433,7 @@ A.decorators = [
             name: _('/node_modules/test-package/some/file.js'),
             contents: `
 import * as tslib_1 from "tslib";
-var D_1;
+let D_1;
 /* A copyright notice */
 import { Directive } from '@angular/core';
 const OtherA = () => (node) => { };
@@ -681,9 +682,9 @@ export { D };
           const stmt3 = new DeclareVarStmt('baz', new LiteralExpr('qux'), undefined, []);
 
           expect(renderer.printStatement(stmt1, sourceFile, importManager)).toBe('const foo = 42;');
-          expect(renderer.printStatement(stmt2, sourceFile, importManager)).toBe('var bar = true;');
+          expect(renderer.printStatement(stmt2, sourceFile, importManager)).toBe('let bar = true;');
           expect(renderer.printStatement(stmt3, sourceFile, importManager))
-              .toBe('var baz = "qux";');
+              .toBe('let baz = "qux";');
         });
       });
     });

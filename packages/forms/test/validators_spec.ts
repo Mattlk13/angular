@@ -7,12 +7,11 @@
  */
 
 import {fakeAsync, tick} from '@angular/core/testing';
-import {describe, expect, it} from '@angular/core/testing/src/testing_internal';
-import {AbstractControl, AsyncValidatorFn, FormArray, FormControl, Validators} from '@angular/forms';
-import {normalizeAsyncValidator} from '@angular/forms/src/directives/normalize_validator';
-import {AsyncValidator, ValidationErrors, ValidatorFn} from '@angular/forms/src/directives/validators';
+import {AbstractControl, AsyncValidator, AsyncValidatorFn, FormArray, FormControl, ValidationErrors, ValidatorFn, Validators} from '@angular/forms';
 import {Observable, of, timer} from 'rxjs';
 import {first, map} from 'rxjs/operators';
+
+import {normalizeValidators} from '../src/validators';
 
 (function() {
 function validator(key: string, error: any): ValidatorFn {
@@ -61,6 +60,20 @@ describe('Validators', () => {
       expect(Validators.min(2)(new FormControl('1'))).toEqual({'min': {'min': 2, 'actual': '1'}});
     });
 
+    it('should not error on small float number validation', () => {
+      expect(Validators.min(1.20)(new FormControl(1.25))).toBeNull();
+    });
+
+    it('should not error on equal float values', () => {
+      expect(Validators.min(1.25)(new FormControl(1.25))).toBeNull();
+    });
+
+    it('should return a validation error on big values', () => {
+      expect(Validators.min(1.25)(new FormControl(1.20))).toEqual({
+        'min': {'min': 1.25, 'actual': 1.20}
+      });
+    });
+
     it('should not error on big values', () => {
       expect(Validators.min(2)(new FormControl(3))).toBeNull();
     });
@@ -103,6 +116,20 @@ describe('Validators', () => {
 
     it('should return null if NaN after parsing', () => {
       expect(Validators.max(2)(new FormControl('aaa'))).toBeNull();
+    });
+
+    it('should not error on small float number validation', () => {
+      expect(Validators.max(1.20)(new FormControl(1.15))).toBeNull();
+    });
+
+    it('should not error on equal float values', () => {
+      expect(Validators.max(1.25)(new FormControl(1.25))).toBeNull();
+    });
+
+    it('should return a validation error on big values', () => {
+      expect(Validators.max(1.25)(new FormControl(1.30))).toEqual({
+        'max': {'max': 1.25, 'actual': 1.30}
+      });
     });
 
     it('should return a validation error on big values', () => {
@@ -403,7 +430,7 @@ describe('Validators', () => {
            const v = Validators.composeAsync(
                [promiseValidator({'one': true}), promiseValidator({'two': true})])!;
 
-           let errorMap: {[key: string]: any}|null = undefined!;
+           let errorMap: {[key: string]: any}|null = null;
            (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
                .pipe(first())
                .subscribe((errors: {[key: string]: any}|null) => errorMap = errors);
@@ -413,11 +440,12 @@ describe('Validators', () => {
          }));
 
       it('should normalize and evaluate async validator-directives correctly', fakeAsync(() => {
-           const v = Validators.composeAsync(
-               [normalizeAsyncValidator(new AsyncValidatorDirective('expected', {'one': true}))])!;
+           const normalizedValidators = normalizeValidators<AsyncValidatorFn>(
+               [new AsyncValidatorDirective('expected', {'one': true})]);
+           const validatorFn = Validators.composeAsync(normalizedValidators)!;
 
-           let errorMap: {[key: string]: any}|null = undefined!;
-           (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
+           let errorMap: {[key: string]: any}|null = null;
+           (validatorFn(new FormControl('invalid')) as Observable<ValidationErrors|null>)
                .pipe(first())
                .subscribe((errors: {[key: string]: any}|null) => errorMap = errors);
            tick();
@@ -440,7 +468,7 @@ describe('Validators', () => {
       it('should ignore nulls', fakeAsync(() => {
            const v = Validators.composeAsync([promiseValidator({'one': true}), null!])!;
 
-           let errorMap: {[key: string]: any}|null = undefined!;
+           let errorMap: {[key: string]: any}|null = null;
            (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
                .pipe(first())
                .subscribe((errors: {[key: string]: any}|null) => errorMap = errors);
@@ -466,7 +494,7 @@ describe('Validators', () => {
         const v = Validators.composeAsync(
             [observableValidator({'one': true}), observableValidator({'two': true})])!;
 
-        let errorMap: {[key: string]: any}|null = undefined!;
+        let errorMap: {[key: string]: any}|null = null;
         (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
             .pipe(first())
             .subscribe((errors: {[key: string]: any}|null) => errorMap = errors);
@@ -475,11 +503,12 @@ describe('Validators', () => {
       });
 
       it('should normalize and evaluate async validator-directives correctly', () => {
-        const v = Validators.composeAsync(
-            [normalizeAsyncValidator(new AsyncValidatorDirective('expected', {'one': true}))])!;
+        const normalizedValidators = normalizeValidators<AsyncValidatorFn>(
+            [new AsyncValidatorDirective('expected', {'one': true})]);
+        const validatorFn = Validators.composeAsync(normalizedValidators)!;
 
-        let errorMap: {[key: string]: any}|null = undefined!;
-        (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
+        let errorMap: {[key: string]: any}|null = null;
+        (validatorFn(new FormControl('invalid')) as Observable<ValidationErrors|null>)
             .pipe(first())
             .subscribe((errors: {[key: string]: any}|null) => errorMap = errors)!;
 
@@ -500,7 +529,7 @@ describe('Validators', () => {
       it('should ignore nulls', () => {
         const v = Validators.composeAsync([observableValidator({'one': true}), null!])!;
 
-        let errorMap: {[key: string]: any}|null = undefined!;
+        let errorMap: {[key: string]: any}|null = null;
         (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
             .pipe(first())
             .subscribe((errors: {[key: string]: any}|null) => errorMap = errors);
@@ -518,7 +547,7 @@ describe('Validators', () => {
            const v = Validators.composeAsync(
                [getTimerObs(100, {one: true}), getTimerObs(200, {two: true})])!;
 
-           let errorMap: {[key: string]: any}|null = undefined!;
+           let errorMap: {[key: string]: any}|null|undefined = undefined;
            (v(new FormControl('invalid')) as Observable<ValidationErrors|null>)
                .pipe(first())
                .subscribe((errors: {[key: string]: any}|null) => errorMap = errors);

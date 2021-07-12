@@ -1,16 +1,18 @@
-import { Component } from '@angular/core';
+import { Component, HostBinding } from '@angular/core';
 
 @Component({
   selector: 'comp-with-host-binding',
   template: 'I am a component!',
-  host: {
-    '[class.special]': 'isSpecial',
-    '[style.color]': 'color',
-    '[style.width]': 'width'
-  }
 })
 export class CompWithHostBindingComponent {
+  @HostBinding('class.special')
   isSpecial = false;
-  color = 'green';
+
+  @HostBinding('style.color')
+  color = 'pink';
+
+  // #docregion hostbinding
+  @HostBinding('style.width')
   width = '200px';
+  // #enddocregion hostbinding
 }

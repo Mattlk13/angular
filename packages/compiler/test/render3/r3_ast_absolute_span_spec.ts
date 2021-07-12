@@ -339,4 +339,36 @@ describe('expression AST absolute source spans', () => {
               [['As', new AbsoluteSourceSpan(22, 24)], ['Bs', new AbsoluteSourceSpan(35, 37)]]));
     });
   });
+
+  describe('ICU expressions', () => {
+    it('is correct for variables and placeholders', () => {
+      const spans = humanizeExpressionSource(
+          parse('<span i18n>{item.var, plural, other { {{item.placeholder}} items } }</span>')
+              .nodes);
+      expect(spans).toContain(['item.var', new AbsoluteSourceSpan(12, 20)]);
+      expect(spans).toContain(['item.placeholder', new AbsoluteSourceSpan(40, 56)]);
+    });
+
+    it('is correct for variables and placeholders', () => {
+      const spans = humanizeExpressionSource(
+          parse(
+              '<span i18n>{item.var, plural, other { {{item.placeholder}} {nestedVar, plural, other { {{nestedPlaceholder}} }}} }</span>')
+              .nodes);
+      expect(spans).toContain(['item.var', new AbsoluteSourceSpan(12, 20)]);
+      expect(spans).toContain(['item.placeholder', new AbsoluteSourceSpan(40, 56)]);
+      expect(spans).toContain(['nestedVar', new AbsoluteSourceSpan(60, 69)]);
+      expect(spans).toContain(['nestedPlaceholder', new AbsoluteSourceSpan(89, 106)]);
+    });
+  });
+
+  describe('object literal', () => {
+    it('is correct for object literals with shorthand property declarations', () => {
+      const spans =
+          humanizeExpressionSource(parse('<div (click)="test({a: 1, b, c: 3, foo})"></div>').nodes);
+
+      expect(spans).toContain(['{a: 1, b: b, c: 3, foo: foo}', new AbsoluteSourceSpan(19, 39)]);
+      expect(spans).toContain(['b', new AbsoluteSourceSpan(26, 27)]);
+      expect(spans).toContain(['foo', new AbsoluteSourceSpan(35, 38)]);
+    });
+  });
 });

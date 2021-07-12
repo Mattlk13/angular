@@ -13,6 +13,7 @@ ts_library(
     deps = [
         "//packages:types",
         "//packages/private/testing",
+        "@npm//@bazel/runfiles",
         "@npm//@types/shelljs",
     ],
 )
@@ -25,10 +26,6 @@ jasmine_node_test(
         "@npm//@types/shelljs",
         "@npm//shelljs",
     ],
-    # The "ng_package" rule currently does not properly handle flat module
-    # bundles which the common package tests rely on. We temporarily disable
-    # this test until we fix `ng_package` for Ivy. Tracked with: FW-2144.
-    tags = ["fixme-ivy-aot"],
 )
 
 ts_library(
@@ -38,6 +35,7 @@ ts_library(
     deps = [
         "//packages:types",
         "//packages/private/testing",
+        "@npm//@bazel/runfiles",
         "@npm//@types/shelljs",
     ],
 )
@@ -49,10 +47,6 @@ jasmine_node_test(
         "//packages/common:npm_package",
         "@npm//shelljs",
     ],
-    # The "ng_package" rule currently does not properly handle flat module
-    # bundles which the common package tests rely on. We temporarily disable
-    # this test until we fix `ng_package` for Ivy. Tracked with: FW-2144.
-    tags = ["fixme-ivy-aot"],
 )
 
 ts_library(
@@ -61,6 +55,7 @@ ts_library(
     srcs = ["example_package.spec.ts"],
     deps = [
         "//packages:types",
+        "@npm//@bazel/runfiles",
         "@npm//@types/diff",
     ],
 )

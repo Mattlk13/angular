@@ -7,12 +7,43 @@
  */
 
 import * as tss from 'typescript/lib/tsserverlibrary';
+import {NgLanguageService} from '../api';
 
 import {createLanguageService} from './language_service';
 import {TypeScriptServiceHost} from './typescript_host';
 
-export function create(info: tss.server.PluginCreateInfo): tss.LanguageService {
-  const {languageService: tsLS, languageServiceHost: tsLSHost, config} = info;
+// Use a WeakMap to keep track of Project to Host mapping so that when Project
+// is deleted Host could be garbage collected.
+const PROJECT_MAP = new WeakMap<tss.server.Project, TypeScriptServiceHost>();
+
+/**
+ * This function is called by tsserver to retrieve the external (non-TS) files
+ * that should belong to the specified `project`. For Angular, these files are
+ * external templates. This is called once when the project is loaded, then
+ * every time when the program is updated.
+ * @param project Project for which external files should be retrieved.
+ */
+export function getExternalFiles(project: tss.server.Project): string[] {
+  if (!project.hasRoots()) {
+    // During project initialization where there is no root files yet we should
+    // not do any work.
+    return [];
+  }
+  const ngLsHost = PROJECT_MAP.get(project);
+  if (ngLsHost === undefined) {
+    return [];
+  }
+  ngLsHost.getAnalyzedModules();
+  return ngLsHost.getExternalTemplates().filter(fileName => {
+    // TODO(kyliau): Remove this when the following PR lands on the version of
+    // TypeScript used in this repo.
+    // https://github.com/microsoft/TypeScript/pull/41737
+    return project.fileExists(fileName);
+  });
+}
+
+export function create(info: tss.server.PluginCreateInfo): NgLanguageService {
+  const {languageService: tsLS, languageServiceHost: tsLSHost, config, project} = info;
   // This plugin could operate under two different modes:
   // 1. TS + Angular
   //    Plugin augments TS language service to provide additional Angular
@@ -25,6 +56,7 @@ export function create(info: tss.server.PluginCreateInfo): tss.LanguageService {
   const angularOnly = config ? config.angularOnly === true : false;
   const ngLSHost = new TypeScriptServiceHost(tsLSHost, tsLS);
   const ngLS = createLanguageService(ngLSHost);
+  PROJECT_MAP.set(project, ngLSHost);
 
   function getCompletionsAtPosition(
       fileName: string, position: number, options: tss.GetCompletionsAtPositionOptions|undefined) {
@@ -87,16 +119,26 @@ export function create(info: tss.server.PluginCreateInfo): tss.LanguageService {
     return ngLS.getDefinitionAndBoundSpan(fileName, position);
   }
 
-  const proxy: tss.LanguageService = Object.assign(
-      // First clone the original TS language service
-      {}, tsLS,
-      // Then override the methods supported by Angular language service
-      {
-        getCompletionsAtPosition,
-        getQuickInfoAtPosition,
-        getSemanticDiagnostics,
-        getDefinitionAtPosition,
-        getDefinitionAndBoundSpan,
-      });
-  return proxy;
+  function getTcb(fileName: string, position: number) {
+    // Not implemented in VE Language Service
+    return undefined;
+  }
+
+  function getComponentLocationsForTemplate(fileName: string) {
+    // Not implemented in VE Language Service
+    return [];
+  }
+
+  return {
+    // First clone the original TS language service
+    ...tsLS,
+    // Then override the methods supported by Angular language service
+    getCompletionsAtPosition,
+    getQuickInfoAtPosition,
+    getSemanticDiagnostics,
+    getDefinitionAtPosition,
+    getDefinitionAndBoundSpan,
+    getTcb,
+    getComponentLocationsForTemplate,
+  };
 }

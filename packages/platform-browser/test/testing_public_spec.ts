@@ -8,7 +8,7 @@
 
 import {CompilerConfig, ResourceLoader} from '@angular/compiler';
 import {Compiler, Component, ComponentFactoryResolver, CUSTOM_ELEMENTS_SCHEMA, Directive, Inject, Injectable, InjectionToken, Injector, Input, NgModule, Optional, Pipe, SkipSelf, ɵstringify as stringify} from '@angular/core';
-import {async, fakeAsync, getTestBed, inject, TestBed, tick, withModule} from '@angular/core/testing';
+import {fakeAsync, getTestBed, inject, TestBed, tick, waitForAsync, withModule} from '@angular/core/testing';
 import {expect} from '@angular/platform-browser/testing/src/matchers';
 import {ivyEnabled, modifiedInIvy, obsoleteInIvy, onlyInIvy} from '@angular/private/testing';
 
@@ -146,11 +146,11 @@ const bTok = new InjectionToken<string>('b');
         }, 0);
       });
 
-      it('should run async tests with tasks', async(function(this: TestContext) {
+      it('should run async tests with tasks', waitForAsync(function(this: TestContext) {
            setTimeout(() => this.actuallyDone = true, 0);
          }));
 
-      it('should run async tests with promises', async(function(this: TestContext) {
+      it('should run async tests with promises', waitForAsync(function(this: TestContext) {
            const p = new Promise((resolve, reject) => setTimeout(resolve, 10));
            p.then(() => this.actuallyDone = true);
          }));
@@ -192,7 +192,7 @@ const bTok = new InjectionToken<string>('b');
              }));
 
       it('should preserve context when async and inject helpers are combined',
-         async(inject([], function(this: TestContext) {
+         waitForAsync(inject([], function(this: TestContext) {
            setTimeout(() => this.contextModified = true, 0);
          })));
 
@@ -214,7 +214,7 @@ const bTok = new InjectionToken<string>('b');
              }));
 
           it('should wait until returned promises',
-             async(inject([FancyService], (service: FancyService) => {
+             waitForAsync(inject([FancyService], (service: FancyService) => {
                service.getAsyncValue().then((value) => expect(value).toEqual('async value'));
                service.getTimeoutValue().then((value) => expect(value).toEqual('timeout value'));
              })));
@@ -251,7 +251,7 @@ const bTok = new InjectionToken<string>('b');
           });
 
           describe('using async beforeEach', () => {
-            beforeEach(async(inject([FancyService], (service: FancyService) => {
+            beforeEach(waitForAsync(inject([FancyService], (service: FancyService) => {
               service.getAsyncValue().then((value) => service.value = value);
             })));
 
@@ -335,9 +335,9 @@ const bTok = new InjectionToken<string>('b');
       });
 
       describe('components with template url', () => {
-        beforeEach(async(() => {
+        beforeEach(waitForAsync(async () => {
           TestBed.configureTestingModule({declarations: [CompWithUrlTemplate]});
-          TestBed.compileComponents();
+          await TestBed.compileComponents();
         }));
 
         isBrowser &&
@@ -774,18 +774,6 @@ const bTok = new InjectionToken<string>('b');
           expect(testDir!.test).toBe('some prop');
         });
 
-        it('should throw if the TestBed is already created', () => {
-          @Component({selector: 'comp', template: 'a'})
-          class MyComponent {
-          }
-
-          TestBed.inject(Injector);
-
-          expect(() => TestBed.overrideTemplateUsingTestingModule(MyComponent, 'b'))
-              .toThrowError(
-                  /Cannot override template when the test module has already been instantiated/);
-        });
-
         it('should reset overrides when the testing module is resetted', () => {
           @Component({selector: 'comp', template: 'a'})
           class MyComponent {
@@ -848,7 +836,6 @@ const bTok = new InjectionToken<string>('b');
 
     describe('errors', () => {
       let originalJasmineIt: (description: string, func: () => void) => jasmine.Spec;
-      let originalJasmineBeforeEach: (beforeEachFunction: (done: DoneFn) => void) => void;
 
       const patchJasmineIt = () => {
         let resolve: (result: any) => void;
@@ -857,8 +844,9 @@ const bTok = new InjectionToken<string>('b');
           resolve = res;
           reject = rej;
         });
-        originalJasmineIt = jasmine.getEnv().it;
-        jasmine.getEnv().it = (description: string, fn: (done: DoneFn) => void): any => {
+        const jasmineEnv = jasmine.getEnv() as any;
+        originalJasmineIt = jasmineEnv.it;
+        jasmineEnv.it = (description: string, fn: (done: DoneFn) => void): any => {
           const done = <DoneFn>(() => resolve(null));
           done.fail = (err) => reject(err);
           fn(done);
@@ -867,34 +855,15 @@ const bTok = new InjectionToken<string>('b');
         return promise;
       };
 
-      const restoreJasmineIt = () => jasmine.getEnv().it = originalJasmineIt;
-
-      const patchJasmineBeforeEach = () => {
-        let resolve: (result: any) => void;
-        let reject: (error: any) => void;
-        const promise = new Promise((res, rej) => {
-          resolve = res;
-          reject = rej;
-        });
-        originalJasmineBeforeEach = jasmine.getEnv().beforeEach;
-        jasmine.getEnv().beforeEach = (fn: (done: DoneFn) => void) => {
-          const done = <DoneFn>(() => resolve(null));
-          done.fail = (err) => reject(err);
-          fn(done);
-        };
-        return promise;
-      };
-
-      const restoreJasmineBeforeEach = () => jasmine.getEnv().beforeEach =
-          originalJasmineBeforeEach;
+      const restoreJasmineIt = () => ((jasmine.getEnv() as any).it = originalJasmineIt);
 
       it('should fail when an asynchronous error is thrown', (done) => {
         const itPromise = patchJasmineIt();
         const barError = new Error('bar');
 
-        it('throws an async error', async(inject([], () => setTimeout(() => {
-                                                       throw barError;
-                                                     }, 0))));
+        it('throws an async error', waitForAsync(inject([], () => setTimeout(() => {
+                                                              throw barError;
+                                                            }, 0))));
 
         itPromise.then(() => done.fail('Expected test to fail, but it did not'), (err) => {
           expect(err).toEqual(barError);
@@ -906,7 +875,7 @@ const bTok = new InjectionToken<string>('b');
       it('should fail when a returned promise is rejected', (done) => {
         const itPromise = patchJasmineIt();
 
-        it('should fail with an error from a promise', async(inject([], () => {
+        it('should fail with an error from a promise', waitForAsync(inject([], () => {
              let reject: (error: any) => void = undefined!;
              const promise = new Promise((_, rej) => reject = rej);
              const p = promise.then(() => expect(1).toEqual(2));
@@ -933,21 +902,16 @@ const bTok = new InjectionToken<string>('b');
 
         it('should report an error for declared components with templateUrl which never call TestBed.compileComponents',
            () => {
-             const itPromise = patchJasmineIt();
-
              @Component({
                selector: 'comp',
-               templateUrl: '/base/angular/packages/platform-browser/test/static_assets/test.html'
+               templateUrl: '/base/angular/packages/platform-browser/test/static_assets/test.html',
              })
              class InlineCompWithUrlTemplate {
              }
 
-             expect(
-                 () =>
-                     it('should fail',
-                        withModule(
-                            {declarations: [InlineCompWithUrlTemplate]},
-                            () => TestBed.createComponent(InlineCompWithUrlTemplate))))
+             expect(withModule(
+                        {declarations: [InlineCompWithUrlTemplate]},
+                        () => TestBed.createComponent(InlineCompWithUrlTemplate)))
                  .toThrowError(
                      ivyEnabled ?
                          `Component 'InlineCompWithUrlTemplate' is not resolved:
@@ -957,11 +921,8 @@ Did you run and wait for 'resolveComponentResources()'?` :
                              stringify(
                                  InlineCompWithUrlTemplate)} which is using a "templateUrl" or "styleUrls", but they were never compiled. ` +
                              `Please call "TestBed.compileComponents" before your test.`);
-
-             restoreJasmineIt();
            });
       });
-
 
       modifiedInIvy(`Unknown property error thrown instead of logging a message`)
           .it('should error on unknown bound properties on custom elements by default', () => {
@@ -969,17 +930,11 @@ Did you run and wait for 'resolveComponentResources()'?` :
             class ComponentUsingInvalidProperty {
             }
 
-            const itPromise = patchJasmineIt();
-
             expect(
-                () =>
-                    it('should fail',
-                       withModule(
-                           {declarations: [ComponentUsingInvalidProperty]},
-                           () => TestBed.createComponent(ComponentUsingInvalidProperty))))
+                () => withModule(
+                    {declarations: [ComponentUsingInvalidProperty]},
+                    () => TestBed.createComponent(ComponentUsingInvalidProperty))())
                 .toThrowError(/Can't bind to 'someUnknownProp'/);
-
-            restoreJasmineIt();
           });
 
       onlyInIvy(`Unknown property error logged instead of throwing`)
@@ -1011,14 +966,14 @@ Did you run and wait for 'resolveComponentResources()'?` :
         });
       });
 
-      it('should instantiate a component with valid DOM', async(() => {
+      it('should instantiate a component with valid DOM', waitForAsync(() => {
            const fixture = TestBed.createComponent(ChildComp);
            fixture.detectChanges();
 
            expect(fixture.nativeElement).toHaveText('Original Child');
          }));
 
-      it('should allow changing members of the component', async(() => {
+      it('should allow changing members of the component', waitForAsync(() => {
            const componentFixture = TestBed.createComponent(MyIfComp);
            componentFixture.detectChanges();
            expect(componentFixture.nativeElement).toHaveText('MyIf()');
@@ -1028,14 +983,14 @@ Did you run and wait for 'resolveComponentResources()'?` :
            expect(componentFixture.nativeElement).toHaveText('MyIf(More)');
          }));
 
-      it('should override a template', async(() => {
+      it('should override a template', waitForAsync(() => {
            TestBed.overrideComponent(ChildComp, {set: {template: '<span>Mock</span>'}});
            const componentFixture = TestBed.createComponent(ChildComp);
            componentFixture.detectChanges();
            expect(componentFixture.nativeElement).toHaveText('Mock');
          }));
 
-      it('should override a provider', async(() => {
+      it('should override a provider', waitForAsync(() => {
            TestBed.overrideComponent(
                TestProvidersComp,
                {set: {providers: [{provide: FancyService, useClass: MockFancyService}]}});
@@ -1045,7 +1000,7 @@ Did you run and wait for 'resolveComponentResources()'?` :
          }));
 
 
-      it('should override a viewProvider', async(() => {
+      it('should override a viewProvider', waitForAsync(() => {
            TestBed.overrideComponent(
                TestViewProvidersComp,
                {set: {viewProviders: [{provide: FancyService, useClass: MockFancyService}]}});
@@ -1065,11 +1020,75 @@ Did you run and wait for 'resolveComponentResources()'?` :
         });
       });
 
-      it('should override component dependencies', async(() => {
+      it('should override component dependencies', waitForAsync(() => {
            const componentFixture = TestBed.createComponent(ParentComp);
            componentFixture.detectChanges();
            expect(componentFixture.nativeElement).toHaveText('Parent(Mock)');
          }));
+    });
+
+    describe('calling override methods after TestBed initialization', () => {
+      const getExpectedErrorMessage = (methodName: string, methodDescription: string) => `Cannot ${
+          methodDescription} when the test module has already been instantiated. Make sure you are not using \`inject\` before \`${
+          methodName}\`.`;
+
+      it('should throw if TestBed.overrideProvider is called after TestBed initialization', () => {
+        TestBed.inject(Injector);
+
+        expect(() => TestBed.overrideProvider(aTok, {
+          useValue: 'mockValue'
+        })).toThrowError(getExpectedErrorMessage('overrideProvider', 'override provider'));
+      });
+
+      it('should throw if TestBed.overrideModule is called after TestBed initialization', () => {
+        @NgModule()
+        class MyModule {
+        }
+
+        TestBed.inject(Injector);
+
+        expect(() => TestBed.overrideModule(MyModule, {}))
+            .toThrowError(getExpectedErrorMessage('overrideModule', 'override module metadata'));
+      });
+
+      it('should throw if TestBed.overridePipe is called after TestBed initialization', () => {
+        @Pipe({name: 'myPipe'})
+        class MyPipe {
+          transform(value: any) {
+            return value;
+          }
+        }
+
+        TestBed.inject(Injector);
+
+        expect(() => TestBed.overridePipe(MyPipe, {}))
+            .toThrowError(getExpectedErrorMessage('overridePipe', 'override pipe metadata'));
+      });
+
+      it('should throw if TestBed.overrideDirective is called after TestBed initialization', () => {
+        @Directive()
+        class MyDirective {
+        }
+
+        TestBed.inject(Injector);
+
+        expect(() => TestBed.overrideDirective(MyDirective, {}))
+            .toThrowError(
+                getExpectedErrorMessage('overrideDirective', 'override directive metadata'));
+      });
+
+      it('should throw if TestBed.overrideTemplateUsingTestingModule is called after TestBed initialization',
+         () => {
+           @Component({selector: 'comp', template: 'a'})
+           class MyComponent {
+           }
+
+           TestBed.inject(Injector);
+
+           expect(() => TestBed.overrideTemplateUsingTestingModule(MyComponent, 'b'))
+               .toThrowError(
+                   /Cannot override template when the test module has already been instantiated/);
+         });
     });
   });
 }
